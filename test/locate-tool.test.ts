@@ -13,7 +13,9 @@ test('ny_locate defaults to coordinates, archives its private branch, and option
     let raw='';for await(const chunk of req)raw+=chunk;const request=JSON.parse(raw);calls++;
     assert.equal(request.think,false);assert.equal(request.options.num_predict,1);
     assert.ok(request.messages[1].images.length===1);
-    res.setHeader('content-type','application/json');res.end(JSON.stringify({logprobs:[{token:'J',top_logprobs:Array.from({length:12},(_,i)=>({token:String.fromCharCode(65+i),logprob:Math.log(i===9?.98:.02/11)}))}]}));
+    assert.ok(!request.messages[1].content.includes('Unrelated historical conversation marker'));
+    assert.match(request.messages[1].content,/Exclude red targets/);
+    res.setHeader('content-type','application/json');res.end(JSON.stringify({logprobs:[{token:'A',top_logprobs:Array.from({length:3},(_,i)=>({token:String.fromCharCode(65+i),logprob:Math.log(i===0?.98:.01)}))}]}));
   });
   await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));
   const {default:register}=await import('../extensions/nyatinorma.js');
@@ -26,8 +28,8 @@ test('ny_locate defaults to coordinates, archives its private branch, and option
     const tools=new Map<string,any>();
     await register({on:()=>{},registerTool:(t:any)=>tools.set(t.name,t),registerCommand:()=>{},registerProvider:()=>{}} as any);
     const tool=tools.get('ny_locate');assert.ok(tool);
-    const ctx={model:{api:'nyatinorma-native-ollama',id:'mock',baseUrl:`http://127.0.0.1:${(server.address() as any).port}`},modelRegistry:{getApiKeyAndHeaders:async()=>({ok:true})},sessionManager:{getBranch:()=>[{type:'message',id:'user',message:{role:'user',content:'Only locate a point'}}]},ui:{setStatus:()=>{}},hasPendingMessages:()=>false};
-    const args={target:'centre button',snapshotId:id};
+    const ctx={model:{api:'nyatinorma-native-ollama',id:'mock',baseUrl:`http://127.0.0.1:${(server.address() as any).port}`},modelRegistry:{getApiKeyAndHeaders:async()=>({ok:true})},sessionManager:{getBranch:()=>[{type:'message',id:'user',message:{role:'user',content:'Unrelated historical conversation marker'}}]},ui:{setStatus:()=>{}},hasPendingMessages:()=>false};
+    const args={target:'centre button',snapshotId:id,constraints:'Exclude red targets'};
     const result=await tool.execute('test',args,undefined,undefined,ctx);
     assert.equal(result.details.reason,'located');assert.deepEqual(result.details.point,{x:.5,y:.5});
     assert.equal(result.content.filter((b:any)=>b.type==='image').length,1);

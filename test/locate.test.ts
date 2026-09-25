@@ -28,35 +28,67 @@ test('padded zoom includes neighbours, stays in its parent and preserves the sel
   assert.deepEqual(zoomCell({x:0,y:0,width:1,height:1},0),{point:{x:1/6,y:1/6},view:{x:0,y:0,width:.5,height:.5}});
 });
 
-test('zoom appends an exact prefix, backtracking restores it, only confirmation returns coordinates',async()=>fixture(async s=>{
-  const original=await readFile(s.path),requests:any[]=[],sequence=['cell-1','cell-9','back','confirm'];
-  const result=await locate(s,{target:'green button',constraints:'Do not click',maxSteps:6},{minMass:.5,minMargin:.2,choose:async(state,choices,_signal,image,history)=>{
-    assert.equal(choices.length,12);const messages=selectionHistory(state,choices,image,history);requests.push(messages);
+test('search branches preserve ancestor prefixes, backtrack and do not revisit a failed child',async()=>fixture(async s=>{
+  const original=await readFile(s.path),requests:any[]=[],sequence=['no','cell-1','no','cell-9','uncertain','back','cell-2','yes'];
+  const result=await locate(s,{target:'green button',constraints:'Do not click',maxSteps:12},{minMass:.5,minMargin:.2,choose:async(state,choices,_signal,image,history)=>{
+    const messages=selectionHistory(state,choices,image,history);requests.push(messages);
     assert.match(messages[0].content,/Do not click/);return decision(sequence[requests.length-1]);
   }});
-  assert.equal(result.reason,'located');assert.deepEqual(result.point,{x:1/6,y:1/6});assert.equal(result.pixels!.x,160);assert.ok(Math.abs(result.pixels!.y-640/6)<1e-10);
-  assert.deepEqual(requests[1].slice(0,1),requests[0]);
-  assert.deepEqual(requests[2].slice(0,3),requests[1]);
-  assert.deepEqual(requests[3],requests[1]); // restored parent, no changed timestamps or images
+  assert.equal(result.reason,'located');assert.deepEqual(result.point,{x:.25,y:1/12});assert.equal(result.pixels!.x,240);
+  assert.deepEqual(requests[2].slice(0,1),requests[1]);
+  assert.deepEqual(requests[4].slice(0,3),requests[3]);
+  assert.deepEqual(requests[6].slice(0,2),requests[3].slice(0,2));
+  assert.match(requests[6].at(-1).content,/Already explored cells: I/);
   assert.ok(!JSON.stringify(result).includes('base64'));assert.deepEqual(await readFile(s.path),original);
 }));
 
-test('abstention, resolution limit and exhausted search never leak an unconfirmed point',async()=>fixture(async s=>{
-  for(const [choice,reason] of [[null,'uncertain_selection'],['think','needs_planning'],['back','target_not_located'],['bogus','invalid_choice']] as const){
+test('invalid or incomplete confirmation never returns a coordinate',async()=>fixture(async s=>{
+  for(const [choice,reason] of [[null,'uncertain_selection'],['bogus','invalid_choice']] as const){
     const r=await locate(s,{target:'button'},{minMass:.5,minMargin:.2,choose:async()=>decision(choice)});
     assert.equal(r.reason,reason);assert.equal(r.point,undefined);
   }
-  const budget=await locate(s,{target:'button',maxSteps:1},{minMass:.5,minMargin:.2,choose:async()=>decision('cell-1')});
+  const budget=await locate(s,{target:'button',maxSteps:1},{minMass:.5,minMargin:.2,choose:async()=>decision('no')});
   assert.equal(budget.reason,'step_budget');assert.equal(budget.point,undefined);
-  const tiny=await locate(s,{target:'button',view:{x:.2,y:.2,width:.01,height:.01}},{minMass:.5,minMargin:.2,choose:async()=>decision('cell-1')});
+  const tiny=await locate(s,{target:'button',view:{x:.2,y:.2,width:.01,height:.01}},{minMass:.5,minMargin:.2,choose:async()=>decision('no')});
   assert.equal(tiny.reason,'resolution_limit');assert.equal(tiny.point,undefined);
-  const uncertain=await locate(s,{target:'button'},{minMass:.5,minMargin:.2,choose:async()=>({...decision('confirm'),truncated:true})});
+  const uncertain=await locate(s,{target:'button'},{minMass:.5,minMargin:.2,choose:async()=>({...decision('yes'),truncated:true})});
   assert.equal(uncertain.reason,'uncertain_selection');assert.equal(uncertain.point,undefined);
 }));
 
 test('cancellation or human intervention after SELECT cannot return a click coordinate',async()=>fixture(async s=>{
   const controller=new AbortController();
-  await assert.rejects(locate(s,{target:'button',signal:controller.signal},{minMass:.5,minMargin:.2,choose:async()=>{controller.abort();return decision('confirm');}}),{name:'AbortError'});
+  await assert.rejects(locate(s,{target:'button',signal:controller.signal},{minMass:.5,minMargin:.2,choose:async()=>{controller.abort();return decision('yes');}}),{name:'AbortError'});
   let pending=false;
-  await assert.rejects(locate(s,{target:'button'},{minMass:.5,minMargin:.2,check:()=>{if(pending)throw new Error('new instruction');},choose:async()=>{pending=true;return decision('confirm');}}),/new instruction/);
+  await assert.rejects(locate(s,{target:'button'},{minMass:.5,minMargin:.2,check:()=>{if(pending)throw new Error('new instruction');},choose:async()=>{pending=true;return decision('yes');}}),/new instruction/);
+}));
+
+test('equivalent cell scores do not compete with the independent three-way confirmation',async()=>fixture(async s=>{
+  let calls=0;
+  const choose=async(_state:string,choices:any[])=>{
+    calls++;
+    if(calls===2){assert.ok(choices.every(c=>c.id!=='yes'));return {...decision('cell-7'),margin:.001};}
+    assert.deepEqual(choices.map(c=>c.id),['yes','no','uncertain']);return decision(calls===1?'no':'yes');
+  };
+  const result=await locate(s,{target:'lower left button'},{minMass:.5,minMargin:.2,choose});
+  assert.equal(result.reason,'located');assert.equal(calls,3);assert.ok(result.point!.x<.5&&result.point!.y>.5);
+  const weak=await locate(s,{target:'button',maxSteps:1},{minMass:.5,minMargin:.2,choose:async()=>({...decision('yes'),margin:.116})});
+  assert.equal(weak.point,undefined);assert.equal(weak.selection?.reason,'low_confirmation_margin');
+  assert.equal(weak.selection?.phase,'verify');assert.equal(weak.selection?.margin,.116);
+}));
+
+test('known top-k scores may guide a crop but incomplete confirmation still prevents a point',async()=>fixture(async s=>{
+  let calls=0;
+  const result=await locate(s,{target:'button'},{minMass:.5,minMargin:.2,choose:async()=>{
+    calls++;
+    if(calls===1)return decision('no');
+    if(calls===2)return {...decision(null),reason:'incomplete_top_k',truncated:true,probabilities:{'cell-7':.4,'cell-8':.35},margin:.05};
+    return {...decision(null),reason:'incomplete_top_k',truncated:true};
+  }});
+  assert.equal(calls,3);assert.equal(result.depth,1);assert.equal(result.reason,'uncertain_selection');assert.equal(result.point,undefined);
+}));
+
+test('an initial crop can zoom out to the full image instead of being trapped at its root',async()=>fixture(async s=>{
+  let calls=0;const sequence=['no','back','yes'];
+  const result=await locate(s,{target:'centre button',view:{x:0,y:0,width:.25,height:.25}},{minMass:.5,minMargin:.2,choose:async()=>decision(sequence[calls++])});
+  assert.equal(result.reason,'located');assert.deepEqual(result.point,{x:.5,y:.5});assert.deepEqual(result.view,{x:0,y:0,width:1,height:1});
 }));
