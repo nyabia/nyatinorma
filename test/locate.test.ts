@@ -5,7 +5,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import sharp from 'sharp';
-import {locate,zoomCell} from '../src/locate.js';
+import {locate,zoomCell,movePoint} from '../src/locate.js';
 import {selectionHistory} from '../src/ollama.js';
 import type {Snapshot,Decision} from '../src/types.js';
 const decision=(choice:string|null):Decision=>({choice,probabilities:{},legalMass:.99,margin:.9,truncated:false,reason:'test',elapsedMs:1});
@@ -49,8 +49,6 @@ test('invalid or incomplete confirmation never returns a coordinate',async()=>fi
   }
   const budget=await locate(s,{target:'button',maxSteps:1},{minMass:.5,minMargin:.2,choose:async()=>decision('no')});
   assert.equal(budget.reason,'step_budget');assert.equal(budget.point,undefined);
-  const tiny=await locate(s,{target:'button',view:{x:.2,y:.2,width:.01,height:.01}},{minMass:.5,minMargin:.2,choose:async()=>decision('no')});
-  assert.equal(tiny.reason,'resolution_limit');assert.equal(tiny.point,undefined);
   const uncertain=await locate(s,{target:'button'},{minMass:.5,minMargin:.2,choose:async()=>({...decision('yes'),truncated:true})});
   assert.equal(uncertain.reason,'uncertain_selection');assert.equal(uncertain.point,undefined);
 }));
@@ -91,4 +89,24 @@ test('an initial crop can zoom out to the full image instead of being trapped at
   let calls=0;const sequence=['no','back','yes'];
   const result=await locate(s,{target:'centre button',view:{x:0,y:0,width:.25,height:.25}},{minMass:.5,minMargin:.2,choose:async()=>decision(sequence[calls++])});
   assert.equal(result.reason,'located');assert.deepEqual(result.point,{x:.5,y:.5});assert.deepEqual(result.view,{x:0,y:0,width:1,height:1});
+}));
+
+
+test('fine movement keeps the view, supports smaller steps, and requires confirmation after every move',async()=>fixture(async s=>{
+  const sequence=['no','move','smaller','move-right','no','move-down','yes'];let calls=0;
+  const result=await locate(s,{target:'small button'},{minMass:.5,minMargin:.2,choose:async(_state,choices)=>{assert.ok(choices.length<=12);return decision(sequence[calls++]);}});
+  assert.equal(result.reason,'located');assert.equal(calls,7);assert.equal(result.depth,0);
+  assert.deepEqual(result.point,{x:.5625,y:.5625});assert.deepEqual(result.view,{x:0,y:0,width:1,height:1});
+  const edge=movePoint(s,{x:0,y:0,width:1,height:1},{x:.9999,y:.9999},7);
+  assert.ok(edge.x<1&&edge.y<1);
+  let i=0;const tiny=await locate(s,{target:'tiny target',view:{x:.2,y:.2,width:.01,height:.01}},{minMass:.5,minMargin:.2,choose:async()=>decision(['no','move-right','yes'][i++])});
+  assert.equal(tiny.reason,'located');assert.ok(tiny.point!.x>.205);assert.equal(tiny.depth,0);
+}));
+
+test('default budget permits twenty calls but never returns an unconfirmed moved point',async()=>fixture(async s=>{
+  let calls=0,moves=0;
+  const result=await locate(s,{target:'button'},{minMass:.5,minMargin:.2,choose:async(_state,choices)=>{
+    calls++;return decision(choices.some(c=>c.id==='yes')?'no':choices.some(c=>c.id==='move')?'move':++moves%2?'move-right':'move-left');
+  }});
+  assert.equal(calls,20);assert.equal(result.selectCalls,20);assert.equal(result.reason,'step_budget');assert.equal(result.point,undefined);
 }));
