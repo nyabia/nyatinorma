@@ -1,0 +1,15 @@
+{
+  "ollamaUrl": "http://127.0.0.1:11434",
+  "model": "your-vision-model:tag",
+  "contextWindow": 32768,
+  "maxTokens": 4096,
+  "reasoning": true,
+  "targetApp": "Your App",
+  "bundleId": "",
+  "knowledgeAppId": "my-app",
+  "driver": "cua",
+  "dragDriver": "cua",
+  "cuaModifiers": [],
+  "ollamaTimeoutSeconds": 600,
+  "maxRunSeconds": 900
+}

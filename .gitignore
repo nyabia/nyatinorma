@@ -1,0 +1,15 @@
+node_modules/
+.nyatinorma/
+dist/
+.DS_Store
+Nyatinorma Bridge.app/
+
+# Local endpoints, model choices and credentials
+nyatinorma.json
+.env
+.env.*
+!.env.example
+.npmrc
+auth.json
+models.json
+*.tgz
