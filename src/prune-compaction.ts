@@ -10,6 +10,33 @@ const header='Mechanically pruned history, not an AI-written summary. Old tool o
 const render=(records:Record[],dropped:number)=>header+`\nEarlier non-user records omitted: ${dropped}.\n\n`+records.map(r=>`[${r.role}; entryId=${r.entryId}]\n${r.text}`).join('\n\n');
 const tokens=(text:string)=>estimateTokens({role:'user',timestamp:0,content:text});
 
+/** Advance only the compaction boundary, preserving complete tool pairs and
+ * the newest image-bearing exchange. No edits to stored messages or live prefix.
+ * Uses pi's public projection API, including any prior context edits.
+ */
+export function visualCompactionBoundary(event:SessionBeforeCompactEvent):SessionBeforeCompactEvent{
+  const rows=buildSessionProjection(event.branchEntries).entries;
+  const start=rows.findIndex(e=>e.sourceEntry.id===event.preparation.firstKeptEntryId);
+  if(start<0)return event;
+  const lastImage=rows.findLastIndex(e=>e.messages.some(m=>'content' in m&&Array.isArray(m.content)&&m.content.some(b=>b.type==='image')));
+  if(lastImage<start)return event;
+  const budget=Math.min(4000,event.preparation.settings.keepRecentTokens);
+  let cut=start;
+  for(let i=start;i<=lastImage;i++){
+    if(!rows[i].messages.some(m=>m.role==='assistant'||m.role==='user'))continue;
+    const tail=rows.slice(i).flatMap(e=>e.messages);
+    const calls=new Set(tail.flatMap(m=>m.role==='assistant'?m.content.filter(b=>b.type==='toolCall').map(b=>b.id):[]));
+    if(tail.some(m=>m.role==='toolResult'&&!calls.has(m.toolCallId)))continue;
+    cut=i;
+    if(tail.reduce((sum,m)=>sum+estimateTokens(m),0)<=budget)break;
+  }
+  if(cut<=start)return event;
+  const extra=rows.slice(start,cut).flatMap(e=>e.messages).filter(m=>m.role!=='system');
+  return {...event,preparation:{...event.preparation,firstKeptEntryId:rows[cut].sourceEntry.id,
+    messagesToSummarize:[...event.preparation.messagesToSummarize,...event.preparation.turnPrefixMessages,...extra],
+    turnPrefixMessages:[],isSplitTurn:false}};
+}
+
 /** Pure, deterministic adapter for pi's compaction hook. No inference or file edits.
  * Keep pi's valid recent-message cut point, including intact tool-call/result pairs.
  * Only a committed compaction changes the prefix; normal requests do not prune.

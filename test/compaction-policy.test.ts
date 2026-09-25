@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SessionManager,buildSessionContext,type SessionBeforeCompactEvent,type SessionEntry,type CompactionResult} from '@earendil-works/pi-coding-agent';
 import type {Model,AssistantMessage} from '@earendil-works/pi-ai';
-import {compactWithFallback} from '../src/compaction-policy.js';
-import {pruneCompaction,contextTokens,recalledText} from '../src/prune-compaction.js';
+import {compactWithFallback,contextUsageScale} from '../src/compaction-policy.js';
+import {pruneCompaction,contextTokens,recalledText,visualCompactionBoundary} from '../src/prune-compaction.js';
 import registerCompaction from '../extensions/prune-compaction.js';
 
 const model={id:'test',provider:'test',contextWindow:32768,maxTokens:4096} as Model<any>;
@@ -91,4 +91,43 @@ test('recall exposes archived text and selected image without executing actions;
   assert.deepEqual(await handlers.get('session_before_compact')(event,ctx),{cancel:true});
   const cancelled=new AbortController();cancelled.abort();event.signal=cancelled.signal;
   assert.deepEqual(await handlers.get('session_before_compact')(event,ctx),{cancel:true});
+});
+
+
+test('repeated small mechanical checkpoints force semantic summary even below the size limit',async()=>{
+  const {session,event}=fixture();let next=event;
+  for(let i=0;i<3;i++){
+    let summaries=0;const result=await compactWithFallback(next,model,async()=>{summaries++;return checkpoint(next);});
+    assert.equal(summaries,i===2?1:0);assert.equal(result.details.strategy,i===2?'summary-v1':'prune-v1');
+    session.appendCompaction(result.summary,result.firstKeptEntryId,result.tokensBefore,result.details);
+    session.appendMessage({...assistant(''),content:[{type:'toolCall',id:`more${i}`,name:'ny_observe',arguments:{}}]});
+    session.appendMessage({role:'toolResult',timestamp:1,toolName:'ny_observe',toolCallId:`more${i}`,content:[{type:'text',text:'obsolete '.repeat(8000)}],isError:false});
+    const kept=session.appendMessage({role:'user',timestamp:2,content:'Continue under the same constraints.'});
+    next=boundary(session.getBranch(),kept);
+  }
+});
+
+test('same-model server usage tightens budgets; old-model and pre-compaction usage do not',()=>{
+  const {session}=fixture();const m=assistant('recent');m.usage.totalTokens=200000;
+  session.appendMessage(m);let event=boundary(session.getBranch(),session.getLeafId()!);
+  const scale=contextUsageScale(event,model);assert.ok(scale>1);
+  assert.equal(contextUsageScale(event,{...model,id:'other'}),1);
+  session.appendCompaction('checkpoint',event.preparation.firstKeptEntryId,200000,{strategy:'summary-v1'});
+  event=boundary(session.getBranch(),session.getLeafId()!);assert.equal(contextUsageScale(event,model),1);
+});
+
+test('visual cleanup advances the raw tail without splitting tool pairs or dropping the latest image exchange',()=>{
+  const {event}=fixture();const first=event.branchEntries.find(e=>e.type==='message'&&e.message.role==='assistant')!;
+  event.preparation.firstKeptEntryId=first.id;event.preparation.settings.keepRecentTokens=20000;
+  const original=JSON.stringify(event),shortened=visualCompactionBoundary(event);
+  assert.notEqual(shortened.preparation.firstKeptEntryId,first.id);
+  const cut=shortened.branchEntries.findIndex(e=>e.id===shortened.preparation.firstKeptEntryId);
+  const tail=shortened.branchEntries.slice(cut);
+  assert.ok(JSON.stringify(tail).includes('recent-image'));
+  assert.ok(!JSON.stringify(tail).includes('archived-image'));
+  assert.equal(tail[0].type,'message');assert.notEqual((tail[0] as any).message.role,'toolResult');
+  const call=tail.findIndex(e=>e.type==='message'&&e.message.role==='assistant');
+  const result=tail.findIndex(e=>e.type==='message'&&e.message.role==='toolResult');assert.ok(call>=0&&result>call);
+  assert.equal(JSON.stringify(event),original);
+  assert.ok(shortened.preparation.messagesToSummarize.length>0);
 });

@@ -3,6 +3,11 @@ import {config} from './config.js';
 import type {ProviderHeaders} from '@earendil-works/pi-ai';
 import type {Decision} from './types.js';
 
+export type SelectHistory=readonly {prompt:string;image?:string;answer:string}[];
+export function selectionHistory(state:string,choices:{label:string;box?:unknown}[],image?:string,history:SelectHistory=[]){
+  return [...history.flatMap(turn=>[{role:'user' as const,content:turn.prompt,...(turn.image?{images:[turn.image]}:{})},{role:'assistant' as const,content:turn.answer}]),{role:'user' as const,content:selectionPrompt(state,choices).user,...(image?{images:[image]}:{})}];
+}
+
 export type OllamaConnection={baseUrl:string;model:string;headers?:ProviderHeaders};
 export async function chat(payload: Record<string,unknown>, signal?: AbortSignal,connection?:OllamaConnection): Promise<any> {
   const c = await config();
@@ -40,12 +45,12 @@ export function decodeDecision(response:any, ids:string[]): Omit<Decision,'elaps
     reason:!validPosition?'invalid_decision_token':truncated?'incomplete_top_k':'uncalibrated_token_scores'};
 }
 
-export async function select(state:string, choices:{id:string;label:string;box?:unknown}[],signal?:AbortSignal,image?:string,connection?:OllamaConnection):Promise<Decision> {
+export async function select(state:string, choices:{id:string;label:string;box?:unknown}[],signal?:AbortSignal,image?:string,connection?:OllamaConnection,history:SelectHistory=[]):Promise<Decision> {
   if (choices.length<2 || choices.length>12) throw new Error('SELECT requires 2–12 choices including THINK.');
   const start = performance.now();
   const response = await chat({
     think:false,logprobs:true,top_logprobs:20,
-    messages:[{role:'system',content:selectionPrompt(state,choices).system},{role:'user',content:selectionPrompt(state,choices).user,...(image?{images:[image]}:{})}],
+    messages:[{role:'system',content:selectionPrompt(state,choices).system},...selectionHistory(state,choices,image,history)],
     options:{num_predict:1,temperature:1,top_k:0,top_p:1,min_p:0},
   },signal,connection);
   return {...decodeDecision(response,choices.map(c=>c.id)),elapsedMs:performance.now()-start,

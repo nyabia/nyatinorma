@@ -77,7 +77,9 @@ export async function actOnce(input:{snapshotId:string;action:Candidate;anchor:B
     if(!input.expectation.trim())throw new Error('Describe the visible outcome you expect.');
     const set=await defineSet({name:'one-shot',screen:input.expectation,snapshotId:input.snapshotId,visualAnchors:[input.anchor],candidates:[input.action]},false);
     signal?.throwIfAborted();
-    const fresh=await capture(signal),checked=await validateSet(set,fresh),action=checked.valid[0];
+    const original=await snapshot(input.snapshotId),fresh=await capture(signal);
+    if(original.window.pid!==fresh.window.pid||original.window.windowId!==fresh.window.windowId||JSON.stringify(original.window.frame)!==JSON.stringify(fresh.window.frame)||original.width!==fresh.width||original.height!==fresh.height)return {reason:'stale_observation: target window changed',snapshot:fresh};
+    const checked=await validateSet(set,fresh),action=checked.valid[0];
     if(!action)return {reason:'stale_observation: inspect returned image and replan',rejected:checked.rejected,snapshot:fresh};
     await guardRepeatedAction(action,fresh);
     await trace({event:'dispatch',mode:'THINK',action,snapshotId:fresh.id,expectation:input.expectation});

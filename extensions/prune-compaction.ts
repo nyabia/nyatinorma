@@ -2,7 +2,7 @@
 import {Type} from 'typebox';
 import {compact,defineTool,type ExtensionAPI} from '@earendil-works/pi-coding-agent';
 import {config} from '../src/config.js';
-import {recalledText} from '../src/prune-compaction.js';
+import {recalledText,visualCompactionBoundary} from '../src/prune-compaction.js';
 import {compactWithFallback} from '../src/compaction-policy.js';
 
 export default function registerPruneCompaction(pi:ExtensionAPI){
@@ -11,6 +11,9 @@ export default function registerPruneCompaction(pi:ExtensionAPI){
       event.signal.throwIfAborted();
       if(!ctx.model)throw new Error('No active model for compaction budget');
       const model=ctx.model;
+      // Rebuild the valid tool-pair cut point only at compaction. This avoids
+      // keeping ~20k of screenshot-heavy raw history after every cleanup.
+      event=visualCompactionBoundary(event);
       const compaction=await compactWithFallback(event,model,async()=>{
         ctx.ui.notify('도구 결과 정리만으로 부족하여 대화와 이전 요약을 다시 요약합니다.','info');
         const timeout=(await config()).ollamaTimeoutSeconds*1000;
