@@ -22,8 +22,10 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     await say('안녕. 게임은 조작하지 마.');assert.equal(state().run.anonymous,true);const anonymous=state().run.id;
     assert.equal(state().run.preset.id,'scratch');assert.deepEqual(state().knowledge.availableScenarios,[]);assert.equal(state().knowledge.scenario,null);
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_drag'));
-    assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_act'),'direct coordinate clicking is not exposed');
-    assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));
+    const act=payloads.at(-1).tools.find((tool:any)=>tool.function?.name==='ny_act').function;
+    assert.ok(act.parameters.properties.goal);assert.equal(act.parameters.properties.point,undefined);
+    assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));
+    assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_task'));
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_time'));
     nextCalls.push({function:{name:'ny_time',arguments:{operation:'set_deadline',nextLocalTime:'03:00'}}});
     await say('시간 도구 테스트: 다음 현지 03:00을 마감으로 저장하고 게임은 조작하지 마.');
@@ -50,6 +52,10 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     await say('극장 지식 선택 시험. 게임 입력은 하지 마.');assert.equal(state().knowledge.lessons.scenario[0].title,'극장 한정 메모');
     await request('new_session');await say('새 대화 지식 확인만.');assert.equal(state().knowledge.scenario,null);assert.equal(state().knowledge.lessons.scenario.length,0);assert.equal(state().knowledge.lessons.app[0].title,'공통 앱 메모');
     assert.equal(payloads.length,17);
+    nextCalls.push({function:{name:'ny_tools',arguments:{operation:'enable',group:'manage'}}});
+    await say('프리셋 관리 도구만 불러와. 게임은 조작하지 마.');
+    assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_task'));
+    assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));
     const tool=(name:string)=>payloads.at(-1).tools.find((t:any)=>t.function.name===name).function;
     assert.equal(tool('ny_drag').parameters.properties.intent.enum,undefined);
     assert.equal(tool('ny_drag').parameters.properties.stars,undefined);

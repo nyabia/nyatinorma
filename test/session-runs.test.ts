@@ -45,3 +45,17 @@ test('presets, executions and conversation bindings are isolated; legacy state i
     assert.deepEqual(await progress(),updated);
   }finally{await selectRun(null);await rm(dir,{recursive:true,force:true});delete process.env.NYATINORMA_DATA_DIR;}
 });
+
+test('metadata edits preserve observation validity while resume and scope changes invalidate it',async()=>{
+  const {bindRun,requireFreshObservation}=await import('../src/runtime.js');
+  const run:any={id:'metadata-test',status:'ready',title:'Old',preset:{id:'scratch'},scenario:null};
+  try{
+    bindRun(run);const observed=Date.now();requireFreshObservation(observed);
+    await new Promise(resolve=>setTimeout(resolve,5));
+    bindRun({...run,title:'Renamed',stopAt:new Date(Date.now()+60000).toISOString()});requireFreshObservation(observed);
+    bindRun({...run,status:'blocked'});bindRun({...run,status:'ready'});assert.throws(()=>requireFreshObservation(observed),/새 화면/);
+    const fresh=Date.now();requireFreshObservation(fresh);
+    await new Promise(resolve=>setTimeout(resolve,5));
+    bindRun({...run,scenario:'different-scope'});assert.throws(()=>requireFreshObservation(fresh),/새 화면/);
+  }finally{bindRun(null);}
+});

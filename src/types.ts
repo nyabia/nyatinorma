@@ -10,7 +10,7 @@ export type Snapshot = {id:string;at:number;path:string;width:number;height:numb
 export type ActionKind = 'click'|'drag'|'wait'|'think';
 export type Candidate = TargetCoordinates & DestinationCoordinates & {
   id:string;label:string;kind:ActionKind;
-  intent:string;data?:Record<string,unknown>;
+  intent:string;target?:string;data?:Record<string,unknown>;
   requiredText?:string; targetText?:string; template?:string;
   targetAnchor?:{text:string;box:Box};
 };

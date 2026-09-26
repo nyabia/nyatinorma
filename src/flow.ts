@@ -16,9 +16,10 @@ import {acquireInput} from './input-lock.js';
 import {resolveTarget,resolveDestination} from './targeting.js';
 import {DeadlineReached} from './time.js';
 import {assertCanExecute} from './execution-state.js';
+import {performAction,whole,type GroundedClick} from './action-runtime.js';
 import type {Box,Candidate,Snapshot,VisualAnchor,TargetCoordinates,DestinationCoordinates} from './types.js';
 
-export type FlowAction={id:string;label:string;kind:'click'|'drag';box:Box;to?:{x:number;y:number};when:string;next?:string[];targetGuard?:'image'|'region';template?:string};
+export type FlowAction={id:string;label:string;kind:'click'|'drag';box:Box;to?:{x:number;y:number};when:string;target?:string;expectation?:string;next?:string[];targetGuard?:'image'|'region';template?:string};
 export type FlowState={id:string;snapshotId:string;description:string;visualAnchors:Box[];progressRegion:Box;doneWhen:string;actions:FlowAction[];settleMs?:number;maxSettleMs?:number;maxNoProgress?:number;maxWaits?:number;memoryMode?:'progress'|'scan';anchors?:VisualAnchor[]};
 export type Flow={name:string;version:number;purpose:string;entry:string;states:FlowState[];createdAt:number};
 type FlowActionInput=Omit<FlowAction,'box'|'to'> & TargetCoordinates & DestinationCoordinates;
@@ -50,14 +51,14 @@ export async function defineFlow(input:FlowInput){
     const actionIds=new Set<string>();const actions:FlowAction[]=[];
     for(const proposed of state.actions){
       const {point,regionPath,gridPoint,toRegionPath,toGridPoint,...rest}=proposed;
-      const a={...rest,box:resolveTarget(proposed,s.width,s.height).box,to:resolveDestination(proposed)};
+      const a={...rest,box:proposed.kind==='click'?whole:resolveTarget(proposed,s.width,s.height).box,to:resolveDestination(proposed)};
       safeId(a.id);if(['done','wait','replan'].includes(a.id)||actionIds.has(a.id))throw new Error('Duplicate/reserved action ID');actionIds.add(a.id);
       if(!['click','drag'].includes(a.kind)||!a.label.trim()||!a.when.trim())throw new Error('Describe when each click/drag applies.');
       validateBox(a.box);if(a.next?.some(n=>!ids.includes(n)))throw new Error('Unknown next state');
       if(a.kind==='drag'&&(!a.to||![a.to.x,a.to.y].every(n=>Number.isFinite(n)&&n>=0&&n<=1)))throw new Error('Drag needs a normalized endpoint');
       if(a.targetGuard==='region'&&a.kind!=='drag')throw new Error('Only a grounded drag may use region targeting.');
       if(a.targetGuard&&!['image','region'].includes(a.targetGuard))throw new Error('Unknown targetGuard');
-      actions.push({...a,targetGuard:a.targetGuard??'image',template:a.targetGuard==='region'?undefined:await fingerprint(s.path,a.box)});
+      actions.push({...a,...(a.kind==='click'?{target:a.target??a.label}:{}),targetGuard:a.targetGuard??'image',template:a.targetGuard==='region'?undefined:await fingerprint(s.path,a.box)});
     }
     const settleMs=state.settleMs??500,maxSettleMs=state.maxSettleMs??3000,maxNoProgress=state.maxNoProgress??2,maxWaits=state.maxWaits??40;
     if(!Number.isInteger(settleMs)||settleMs<200||!Number.isInteger(maxSettleMs)||maxSettleMs<settleMs||maxSettleMs>10000||!Number.isInteger(maxNoProgress)||maxNoProgress<1||maxNoProgress>3)throw new Error('Use settleMs >=200, maxSettleMs <=10000 and maxNoProgress 1–3.');
@@ -89,6 +90,7 @@ export async function runFlow(flow:Flow,contract:WorkContract,options:{maxAction
   if(!Number.isInteger(confirmDone)||confirmDone<1||confirmDone>3||!Number.isInteger(transientRetries)||transientRetries<0||transientRetries>3||(transientRetries>0&&flow.states.some(s=>s.actions.length))){release();throw new Error('Invalid observation confirmation/retry budget; transient retries require an observation-only flow');}
   const timeout=AbortSignal.timeout(maxSeconds*1000),signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
   let s:Snapshot|undefined,stateId=flow.entry,allowed=[flow.entry],count=0,noProgress=0,waits=0,lastAction='none',previousState='',calls=0,doneStreak=0,transients=0;
+  const grounded=new Map<string,GroundedClick>();
   const memories=new Map<string,VisualMemory>();let memoryInfo:unknown;
   const memoryPath=currentRun()?resolve(activeRunPath(),`${safeId(flow.name)}.memory.json`):undefined;
   let savedMemory:Record<string,VisualMemoryData>={};
@@ -96,7 +98,7 @@ export async function runFlow(flow:Flow,contract:WorkContract,options:{maxAction
   const finish=async(reason:string,extra:Record<string,unknown>={})=>{const result={reason,name:flow.name,version:flow.version,state:stateId,actions:count,selectCalls:calls,elapsedMs:Date.now()-start,visualMemory:memoryInfo,snapshot:s,...extra};await d.trace({event:'flow_end',...result,snapshot:s?.id});return result;};
   const candidates=async(state:FlowState,image:Snapshot)=>{
     const result:FlowAction[]=[];
-    for(const a of state.actions){if(a.targetGuard==='region'){result.push(a);continue;}const m=await matchTarget(image.path,a.box,a.template!,image.width,image.height);if(m.delta<=c.templateMaxError)result.push({...a,box:m.box});}
+    for(const a of state.actions){if(a.kind==='click'||a.targetGuard==='region'){result.push(a);continue;}const m=await matchTarget(image.path,a.box,a.template!,image.width,image.height);if(m.delta<=c.templateMaxError)result.push({...a,box:m.box});}
     return result;
   };
   const matches=async(image:Snapshot)=>{const found:FlowState[]=[];for(const state of flow.states.filter(v=>allowed.includes(v.id))){
@@ -155,8 +157,13 @@ export async function runFlow(flow:Flow,contract:WorkContract,options:{maxAction
       // Region drags still require the observed content to remain stable while the model was queued.
       if(difference(await fingerprint(s.path,state.progressRegion),await fingerprint(fresh.path,state.progressRegion))>c.templateMaxError){s=fresh;lastAction='observation changed during inference';if(++waits>8)return await finish('unstable_screen');continue;}
       const before=await fingerprint(fresh.path,state.progressRegion);check();
-      const action:Candidate={...refreshed,intent:refreshed.when};await d.trace({event:'dispatch',mode:'SELECT_FLOW',name:flow.name,state:stateId,action,snapshotId:fresh.id});
-      const input=await d.execute(action,fresh,signal);count++;lastAction=action.label;
+      const action:Candidate={...refreshed,intent:refreshed.when},key=`${stateId}/${action.id}`;
+      const performed=await performAction(fresh,{action,target:refreshed.kind==='click'?(refreshed.target??refreshed.label):undefined,grounded:grounded.get(key),regions:state.visualAnchors},signal,{capture:d.capture,execute:d.execute,choose:d.choose,check});
+      calls+=performed.selectCalls;s=performed.snapshot;
+      if(!performed.performed)return await finish(performed.reason);
+      if(performed.grounded)grounded.set(key,performed.grounded);
+      await d.trace({event:'dispatch',mode:'SELECT_FLOW',name:flow.name,state:stateId,action:performed.action,snapshotId:s.id});
+      const input=performed.input as any;count++;lastAction=action.label;
       await d.trace({event:'input_result',mode:'SELECT_FLOW',actionId:action.id,input});
       if(input?.focusPreserved===false){s=await d.capture(signal);return await finish('foreground_changed');}
       const settle=Date.now();await d.sleep(state.settleMs??500,signal);check();s=await d.capture(signal);

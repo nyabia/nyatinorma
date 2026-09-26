@@ -2,13 +2,19 @@
 import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 
+export class CuaSessionRestoredError extends Error {
+  constructor(){super('Cua session was restored; the input was rejected and was not replayed. Fresh-screen verification is required before retry.');this.name='CuaSessionRestoredError';}
+}
+export class CuaTimeoutError extends Error {
+  constructor(readonly operation:string){super(`Cua ${operation} timed out. ${['click','drag'].includes(operation)?'Input outcome unknown; do not replay automatically.':'No new observation was obtained.'}`);this.name='CuaTimeoutError';}
+}
 // Own only this MCP client and its explicitly named session, never the daemon.
 export class CuaTransport {
   readonly session=`nyatinorma-${process.pid}-${randomUUID().slice(0,8)}`;
   private child?:ChildProcessWithoutNullStreams;
   private pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:NodeJS.Timeout}>();
   private serial=0;private ready?:Promise<void>;private named=false;
-  constructor(private executable:string,private args=['mcp']){}
+  constructor(private executable:string,private args=['mcp'],private timeoutMs=180_000){}
   private async connect(){
     if(this.ready)return this.ready;
     this.ready=(async()=>{
@@ -27,10 +33,10 @@ export class CuaTransport {
       child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
     })();return this.ready;
   }
-  private request(method:string,params:unknown):Promise<any>{
+  private request(method:string,params:any):Promise<any>{
     const id=++this.serial;
     return new Promise((resolve,reject)=>{
-      const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error(`Cua ${method} timed out. Observe before retrying an input with unknown outcome.`));},60_000);
+      const timer=setTimeout(()=>{this.pending.delete(id);reject(new CuaTimeoutError(params?.name??method));},this.timeoutMs);
       this.pending.set(id,{resolve,reject,timer});
       this.child!.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n',error=>{if(error){clearTimeout(timer);this.pending.delete(id);reject(error);}});
     });
@@ -55,7 +61,7 @@ export class CuaTransport {
       await this.call('start_session',{session:this.session,capture_scope:'window'},false,signal);
       this.named=true;signal?.throwIfAborted();
       // Reacquire an image after recovery; do not replay input based on an old one.
-      if(name!=='get_window_state')throw new Error('Cua session was restored; the input was rejected and was not replayed. Call ny_observe before deciding the next action. ny_run resume does not reconnect Cua.');
+      if(name!=='get_window_state')throw new CuaSessionRestoredError();
       result=await this.request('tools/call',params);
       if(this.endedSession(result,name)){
         this.named=false;

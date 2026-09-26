@@ -8,7 +8,7 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {ModelRuntime,ModelRegistry} from '@earendil-works/pi-coding-agent';
 import {selectionPrompt} from '../src/ollama.js';
-import {selectForModel} from '../src/selection.js';
+import {selectForModel,generateForModel} from '../src/selection.js';
 
 test('SELECT uses the active standard pi provider, auth, image format and thinking compatibility; missing logprobs abstain',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'ny-provider-'));let missing=false;const requests:any[]=[];
@@ -17,6 +17,9 @@ test('SELECT uses the active standard pi provider, auth, image format and thinki
     let body='';for await(const chunk of req)body+=chunk;const p=JSON.parse(body);requests.push(p);
     assert.equal(req.url,'/v1/chat/completions');assert.equal(req.headers.authorization,'Bearer test-key');assert.equal(req.headers['x-test'],'provider-header');
     res.setHeader('content-type','text/event-stream');
+    if(p.max_tokens>1){
+      res.end(`data: ${JSON.stringify({choices:[{index:0,delta:{role:'assistant',content:'{"description":"screen","actions":[]}'},finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);return;
+    }
     const logprobs=missing?undefined:{content:[{token:'B',logprob:Math.log(.8),top_logprobs:[{token:'A',logprob:Math.log(.1)},{token:'B',logprob:Math.log(.8)},{token:'C',logprob:Math.log(.1)}]}]};
     res.end(`data: ${JSON.stringify({id:'test',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',content:'B'},finish_reason:null,logprobs}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'length'}],usage:{prompt_tokens:10,completion_tokens:1,total_tokens:11}})}\n\ndata: [DONE]\n\n`);
   });
@@ -40,5 +43,7 @@ test('SELECT uses the active standard pi provider, auth, image format and thinki
     missing=true;assert.equal((await selectForModel(registry,model,'test',choices)).choice,null);
     await assert.rejects(selectForModel(registry,{...model,api:'anthropic-messages'},'test',choices),/SELECT/);assert.equal(requests.length,3);
     const controller=new AbortController();controller.abort();await assert.rejects(selectForModel(registry,model,'test',choices,controller.signal));assert.equal(requests.length,3);
+    assert.equal(JSON.parse(await generateForModel(registry,model,'Current local goal','aW1hZ2U=')).description,'screen');
+    const generated=requests.at(-1);assert.equal(generated.max_tokens,1800);assert.equal(generated.chat_template_kwargs.enable_thinking,false);assert.equal(generated.tools,undefined);assert.equal(generated.logprobs,undefined);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await rm(dir,{recursive:true,force:true});}
 });

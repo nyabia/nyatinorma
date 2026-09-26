@@ -11,6 +11,7 @@ import type {Candidate,SelectSet,Snapshot,Box} from './types.js';
 import {requireFreshObservation} from './runtime.js';
 import {acquireInput} from './input-lock.js';
 import {resolveTarget,resolveDestination} from './targeting.js';
+import {performAction,whole,type GroundedClick} from './action-runtime.js';
 import {assertCanExecute} from './execution-state.js';
 
 export async function defineSet(input:{name:string;screen:string;purpose?:string;anchors?:string[];visualAnchors?:Box[];visualAnchorRegions?:string[][];snapshotId:string;candidates:Candidate[]},persist=true) {
@@ -26,9 +27,9 @@ export async function defineSet(input:{name:string;screen:string;purpose?:string
   const candidates:Candidate[]=[];
   for(const proposed of input.candidates){
     if(proposed.targetText||proposed.requiredText||proposed.targetAnchor)throw new Error('OCR targeting is disabled. Inspect a crop and supply a visually grounded box.');
-    const resolved=resolveTarget(proposed,s.width,s.height),to=resolveDestination(proposed);
+    const resolved=proposed.kind==='click'?{box:whole}:resolveTarget(proposed,s.width,s.height),to=resolveDestination(proposed);
     const {point,regionPath,gridPoint,toRegionPath,toGridPoint,...rest}=proposed;
-    const candidate={...rest,box:resolved.box,to};
+    const candidate={...rest,box:resolved.box,to,...(proposed.kind==='click'?{target:proposed.target??proposed.label}:{})};
     safeId(candidate.id);if(['think','wait'].includes(candidate.id)||ids.has(candidate.id))throw new Error('Duplicate or reserved action ID');ids.add(candidate.id);
     if(!['click','drag'].includes(candidate.kind))throw new Error('Define only click/drag candidates; control actions are built in.');
     if(candidate.box)validateBox(candidate.box);
@@ -49,6 +50,7 @@ export async function validateSet(set:SelectSet,s:Snapshot) {
   for(const candidate of set.candidates) {
     try{
       checkCandidate(candidate);
+      if(candidate.kind==='click'){valid.push(candidate);continue;}
       const {box,delta}=await matchTarget(s.path,candidate.box!,candidate.template!,s.width,s.height);
       if(delta>c.templateMaxError)throw new Error(`target changed (${delta.toFixed(3)})`);
       valid.push({...candidate,box});
@@ -68,27 +70,21 @@ async function guardRepeatedAction(action:Candidate,fresh:Snapshot) {
   if(difference(await fingerprint(before.path,whole),await fingerprint(fresh.path,whole))<.015)
     throw new Error('Repeated click on an unchanged screen blocked. Observe/crop and revise target or wait; do not retry the same action unchanged.');
 }
-// THINK has already chosen this action; another SELECT request adds no new planning.
-// Both paths still use the same screenshot guards, policy and native input driver.
-export async function actOnce(input:{snapshotId:string;action:Candidate;anchor:Box;expectation:string},signal?:AbortSignal) {
+// One observed drag or a point confirmed by ny_locate. The low-level path is not
+// exposed as a raw-coordinate click tool. Caller retains a per-run fresh capture.
+export async function actOnce(input:{snapshotId:string;action:Candidate;anchor:Box;expectation:string;grounded?:GroundedClick},signal?:AbortSignal,choose:typeof select=select) {
   const release=acquireInput();
   try{
-    assertCanExecute();
+    assertCanExecute();const original=await snapshot(input.snapshotId);requireFreshObservation(original.at);
     if(!input.expectation.trim())throw new Error('Describe the visible outcome you expect.');
-    const set=await defineSet({name:'one-shot',screen:input.expectation,snapshotId:input.snapshotId,visualAnchors:[input.anchor],candidates:[input.action]},false);
-    signal?.throwIfAborted();
-    const original=await snapshot(input.snapshotId),fresh=await capture(signal);
-    if(original.window.pid!==fresh.window.pid||original.window.windowId!==fresh.window.windowId||JSON.stringify(original.window.frame)!==JSON.stringify(fresh.window.frame)||original.width!==fresh.width||original.height!==fresh.height)return {reason:'stale_observation: target window changed',snapshot:fresh};
-    const checked=await validateSet(set,fresh),action=checked.valid[0];
-    if(!action)return {reason:'stale_observation: inspect returned image and replan',rejected:checked.rejected,snapshot:fresh};
-    await guardRepeatedAction(action,fresh);
-    await trace({event:'dispatch',mode:'THINK',action,snapshotId:fresh.id,expectation:input.expectation});
-    const result=await execute(action,fresh,signal);
-    await trace({event:'input_result',mode:'THINK',actionId:action.id,input:result});
-    await new Promise(r=>setTimeout(r,1800));
+    await validateVisualAnchors([{box:input.anchor,template:await fingerprint(original.path,input.anchor)}],original.path,(await config()).templateMaxError);
+    const action={...input.action,box:input.action.box??resolveTarget(input.action,original.width,original.height).box,to:resolveDestination(input.action)};
+    const result=await performAction(original,{action,target:action.kind==='click'?(input.grounded?.target??action.label):undefined,grounded:input.grounded,regions:[input.anchor]},signal,{choose});
+    if(!result.performed)return {reason:result.reason,snapshot:result.snapshot};
+    await trace({event:'dispatch',mode:'OBSERVED_ACTION',action:result.action,snapshotId:result.snapshot.id,expectation:input.expectation});
+    await new Promise(r=>setTimeout(r,700));
     const after=await capture(signal);
-    await trace({event:'after_action',mode:'THINK',actionId:action.id,snapshotId:after.id,expectation:input.expectation});
-    return {reason:result?.focusPreserved===false?'foreground_changed: stop input':'verify_expected_outcome',expectation:input.expectation,beforeSnapshotId:fresh.id,snapshot:after};
+    return {reason:(result.input as any)?.focusPreserved===false?'foreground_changed: stop input':'verify_expected_outcome',expectation:input.expectation,beforeSnapshotId:result.snapshot.id,snapshot:after};
   }finally{release();}
 }
 export async function runSelect(name:string,maxSteps:number,signal?:AbortSignal,onUpdate?:(s:string)=>void,choose:typeof select=select) {
@@ -98,7 +94,7 @@ export async function runSelect(name:string,maxSteps:number,signal?:AbortSignal,
     const c=await config(),t=await task(),set=await loadSet(name),start=Date.now();
     signal=signal?AbortSignal.any([signal,AbortSignal.timeout(c.maxRunSeconds*1000)]):AbortSignal.timeout(c.maxRunSeconds*1000);
     const steps=Math.min(Math.max(1,maxSteps),c.maxSteps);let last:Snapshot|undefined;
-    let previousClick:{id:string;fingerprint:string}|undefined;
+    let previousClick:{id:string;fingerprint:string}|undefined;const grounded=new Map<string,GroundedClick>();
     for(let step=0;step<steps;step++) {
       signal?.throwIfAborted();assertCanExecute();
       if(Date.now()-start>c.maxRunSeconds*1000)return {reason:'time_budget',steps:step,snapshot:last};
@@ -130,7 +126,13 @@ export async function runSelect(name:string,maxSteps:number,signal?:AbortSignal,
       }
       await guardRepeatedAction(action,fresh);
       await trace({event:'dispatch',action,snapshotId:fresh.id});
-      const input=await execute(action,fresh,signal);
+      let input:any;
+      if(action.kind==='wait')input=await execute(action,fresh,signal);
+      else {
+        const performed=await performAction(fresh,{action,target:action.kind==='click'?(action.target??action.label):undefined,grounded:grounded.get(action.id)},signal,{choose});
+        if(!performed.performed)return {reason:performed.reason,snapshot:performed.snapshot};
+        if(performed.grounded)grounded.set(action.id,performed.grounded);input=performed.input;
+      }
       if(input)await trace({event:'input_result',actionId:action.id,input});
       onUpdate?.(`${action.label} · ${Math.round(decision.elapsedMs)} ms`);
       // A screen transition returns control to THINK on the next fresh observation.

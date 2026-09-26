@@ -4,7 +4,7 @@ import {writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import sharp from 'sharp';
 import {config,dataDir,saveJSON} from './config.js';
-import {CuaTransport} from './cua-transport.js';
+import {CuaTransport,CuaTimeoutError} from './cua-transport.js';
 import type {Snapshot,Candidate,WindowInfo} from './types.js';
 import {assertCanExecute} from './execution-state.js';
 import {native as macNative,capture as macCapture,execute as macExecute} from './macos.js';
@@ -19,7 +19,7 @@ export function driverCapabilities(driver:'cua'|'macos-legacy',platform:NodeJS.P
   const separate=platform==='darwin'&&driver==='cua'&&dragDriver==='macos-bridge';
   return {driver,platform,deliveryMode:'background',dragDriver:separate?'macos-bridge':driver,backgroundDrag:separate?'configured':driver==='cua'&&platform==='darwin'?'unsupported':'unverified',guidance:separate?'Use ny_drag for a grounded drag. Capture/click use Cua; drag uses the separately configured Nyatinorma bridge in background mode. Verify card movement in the returned image. Never infer success from dispatch.':driver==='cua'&&platform==='darwin'?'macOS cua-driver refuses background drag. Use observed navigation buttons or report a blocker. Never retry as foreground or switch drivers automatically.':'Verify every input with a fresh screenshot; platform support does not prove game compatibility.'};
 }
-async function cua(){return client??=new CuaTransport((await config()).cuaDriverPath);}
+async function cua(){const c=await config();return client??=new CuaTransport(c.cuaDriverPath,['mcp'],c.desktopTimeoutSeconds*1000);}
 export async function closeDesktop(){await client?.close();client=undefined;}
 function rows(value:any,key:string):any[]{if(Array.isArray(value))return value;if(Array.isArray(value[key]))return value[key];throw new Error(`Unexpected cua-driver ${key} response`);}
 export async function targetWindows(){const c=await config();return rows(await (await cua()).call('list_windows',c.targetPid?{pid:c.targetPid}:{}),'windows');}
@@ -46,6 +46,13 @@ export async function native(params:Record<string,unknown>,signal?:AbortSignal):
   throw new Error('공유 cua-driver의 권한·종료·재시작·전역 설정은 nyatinorma에서 변경하지 않습니다.');
 }
 export async function capture(signal?:AbortSignal):Promise<Snapshot>{
+  try{return await captureOnce(signal);}catch(error){
+    if(!(error instanceof CuaTimeoutError)||!['get_window_state','list_windows'].includes(error.operation)||signal?.aborted)throw error;
+    // Read-only retry gets its own output file; a late old response cannot overwrite it.
+    return captureOnce(signal);
+  }
+}
+async function captureOnce(signal?:AbortSignal):Promise<Snapshot>{
   const c=await config();if(c.driver==='macos-legacy')return macCapture(signal);
   signal?.throwIfAborted();const w=await window(),id=`${Date.now()}-${randomUUID().slice(0,8)}`,path=resolve(dataDir,'captures',id+'.png');
   await (await cua()).call('get_window_state',{pid:w.pid,window_id:w.windowId,include_screenshot:true,screenshot_out_file:path,max_elements:1,max_depth:1},true,signal);

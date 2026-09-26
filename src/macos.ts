@@ -18,7 +18,7 @@ export async function native(params:Record<string,unknown>,signal?:AbortSignal):
   const dir=resolve(dataDir,'ipc');await mkdir(dir,{recursive:true,mode:0o700});
   if(!started){await exec('/usr/bin/open',['-g',resolve(root,'Nyatinorma Bridge.app')]);started=true;}
   const id=`${Date.now()}-${randomUUID()}`;const request=resolve(dir,id+'.request.json'),response=resolve(dir,id+'.response.json');
-  const deadline=Date.now()+30_000;
+  const deadline=Date.now()+c.desktopTimeoutSeconds*1000;
   await writeFile(request+'.tmp',JSON.stringify({bundleId:c.bundleId,...params,expiresAt:deadline}),{mode:0o600});await rename(request+'.tmp',request);
   try {
     while(Date.now()<deadline){

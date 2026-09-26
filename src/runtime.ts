@@ -6,7 +6,12 @@ let bound:Run|null=null;
 let observedAfter=0;
 export function currentRun(){return bound;}
 export function currentScenario(){return bound?.scenario===undefined?(bound?.preset.id==='scratch'?undefined:bound?.preset.id):bound.scenario??undefined;}
-export function bindRun(run:Run|null){bound=run;observedAfter=Date.now();}
+export function bindRun(run:Run|null){
+  // Renaming a record or setting its clock deadline does not invalidate pixels.
+  // A different run/scope or an explicit resume still needs a new observation.
+  const changed=!bound||!run||bound.id!==run.id||(bound.status!=='ready'&&run.status==='ready')||JSON.stringify([bound.preset,bound.scenario])!==JSON.stringify([run.preset,run.scenario]);
+  bound=run;if(changed)observedAfter=Date.now();
+}
 export function requireRun(){if(!bound)throw new Error('현재 기록이 연결되지 않았습니다. 새 대화를 열거나 /runs로 저장된 기록을 연결하세요.');return bound;}
 export function assertRunNotBlocked(){if(bound?.status==='blocked')throw new Error('run_blocked: 이 실행은 모델이 진행 불가로 중단했습니다. 사유를 확인하고 사용자가 /play [교정 내용]으로 재개해야 합니다.');}
 export function requireFreshObservation(at:number){requireRun();if(at<observedAfter)throw new Error('실행을 시작/재개한 뒤 ny_observe로 새 화면을 확인하세요. 과거 대화나 게임 화면은 현재 상태가 아닙니다.');}

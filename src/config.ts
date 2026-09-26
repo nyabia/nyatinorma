@@ -9,7 +9,7 @@ export type Config = {
   contextWindow:number;maxTokens:number;reasoning:boolean;
   driver:'cua'|'macos-legacy';dragDriver:'cua'|'macos-bridge';cuaDriverPath:string;cuaModifiers:string[];targetApp:string;targetPid?:number;targetWindowId?:number;
   ollamaUrl: string; model: string; bundleId: string;
-  maxSteps: number; maxRunSeconds: number; ollamaTimeoutSeconds: number;
+  maxSteps: number; maxRunSeconds: number; ollamaTimeoutSeconds: number; desktopTimeoutSeconds:number;
   selectMinMass: number; selectMinMargin: number; templateMaxError: number;
   inputMode:'background'|'foreground'; showAgentPointer:boolean; dragDurationMs:number;
 };
@@ -18,7 +18,7 @@ export const defaults: Config = {
   contextWindow:32768,maxTokens:4096,reasoning:true,
   driver:'cua',dragDriver:'cua',cuaDriverPath:'cua-driver',cuaModifiers:[],targetApp:'',
   ollamaUrl:'http://127.0.0.1:11434', model:'', bundleId:'',
-  maxSteps:20, maxRunSeconds:900, ollamaTimeoutSeconds:600,
+  maxSteps:20, maxRunSeconds:900, ollamaTimeoutSeconds:600, desktopTimeoutSeconds:180,
   selectMinMass:0.5, selectMinMargin:0.2, templateMaxError:0.12,
   inputMode:'background',showAgentPointer:true,dragDurationMs:1100,
 };

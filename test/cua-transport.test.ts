@@ -75,7 +75,7 @@ test('persistent expiry has a bounded recovery attempt',async()=>{
 
 test('session recovery never replays a click and requires a fresh observation',async()=>{
   await expiredServer('once',async(client,calls)=>{
-    await assert.rejects(client.call('click',{x:1,y:2},true),/not replayed.*ny_observe/);
+    await assert.rejects(client.call('click',{x:1,y:2},true),/not replayed.*verification/);
     assert.deepEqual((await calls()).map(r=>r.name),['start_session','click','start_session']);
     assert.deepEqual(await client.call('get_window_state',{},true),{ok:true});
   });

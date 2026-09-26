@@ -11,5 +11,6 @@
   "dragDriver": "cua",
   "cuaModifiers": [],
   "ollamaTimeoutSeconds": 600,
+  "desktopTimeoutSeconds": 180,
   "maxRunSeconds": 900
 }
