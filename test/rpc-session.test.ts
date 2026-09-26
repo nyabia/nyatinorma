@@ -22,6 +22,7 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     await say('안녕. 게임은 조작하지 마.');assert.equal(state().run.anonymous,true);const anonymous=state().run.id;
     assert.equal(state().run.preset.id,'scratch');assert.deepEqual(state().knowledge.availableScenarios,[]);assert.equal(state().knowledge.scenario,null);
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_drag'));
+    assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_act'),'direct coordinate clicking is not exposed');
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_time'));
     nextCalls.push({function:{name:'ny_time',arguments:{operation:'set_deadline',nextLocalTime:'03:00'}}});
@@ -29,7 +30,7 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     assert.ok(state().run.stopAt);assert.ok(Date.parse(state().run.stopAt)>Date.now());
     nextCalls.push({function:{name:'ny_time',arguments:{operation:'clear_deadline'}}});
     await say('테스트 마감을 해제하고 게임은 조작하지 마.');assert.equal(state().run.stopAt,null);
-    assert.ok(payloads.at(-1).tools.find((tool:any)=>tool.function?.name==='ny_act').function.parameters.properties.gridPoint);
+    assert.ok(payloads.at(-1).tools.find((tool:any)=>tool.function?.name==='ny_drag').function.parameters.properties.gridPoint);
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_knowledge'));
     await request('prompt',{message:'/save 내 테스트 기록'});
     await say('저장한 기록 이름만 확인해. 게임 조작하지 마.');const first=state().run;assert.equal(first.id,anonymous);assert.equal(first.title,'내 테스트 기록');assert.equal(first.anonymous,false);
@@ -50,8 +51,8 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     await request('new_session');await say('새 대화 지식 확인만.');assert.equal(state().knowledge.scenario,null);assert.equal(state().knowledge.lessons.scenario.length,0);assert.equal(state().knowledge.lessons.app[0].title,'공통 앱 메모');
     assert.equal(payloads.length,17);
     const tool=(name:string)=>payloads.at(-1).tools.find((t:any)=>t.function.name===name).function;
-    assert.equal(tool('ny_act').parameters.properties.intent.enum,undefined);
-    assert.equal(tool('ny_act').parameters.properties.stars,undefined);
+    assert.equal(tool('ny_drag').parameters.properties.intent.enum,undefined);
+    assert.equal(tool('ny_drag').parameters.properties.stars,undefined);
     assert.ok(tool('ny_checkpoint').parameters.properties.data);
     assert.doesNotMatch(payloads.at(-1).messages.find((m:any)=>m.role==='system').content,/trickcal-theater|select_story|select_season|start_battle/);
     nextCalls.push({function:{name:'ny_task',arguments:{operation:'save',id:'learned-navigation',name:'학습한 탐색 절차',objective:'관측한 목록 탐색',instructions:['현재 창부터 관측'],successCriteria:['요청한 항목 확인']}}});
