@@ -66,7 +66,7 @@ test('old observation renewal uses exact pixels or a conservative SELECT, and re
   deps.choose=async()=>yes('no');assert.equal((await revalidateObservation(old,{},deps)).same,false);
   deps.choose=async()=>({...yes('yes'),truncated:true});assert.equal((await revalidateObservation(old,{},deps)).same,false);
   deps.capture=async()=>({...screens[0],window:{...screens[0].window,pid:99}});assert.equal((await revalidateObservation(old,{},deps)).reason,'window_changed');
-  let n=0;deps.capture=async()=>screens[++n%4];deps.choose=async()=>yes('yes');assert.equal((await revalidateObservation(old,{},deps)).same,false);
+  let n=0;deps.capture=async()=>screens[++n%4];deps.choose=async()=>yes('yes');assert.equal((await revalidateObservation(old,{targets:[{x:.8,y:.8,width:.05,height:.05}]},deps)).same,false);
 }));
 
 test('only a proven rejected input can retry after session recovery; timeouts and changed screens never replay',async()=>fixture(async(screens)=>{
@@ -85,4 +85,22 @@ test('saved flow clicks use the shared localizer instead of old guessed coordina
   const flow:Flow={name:'open',version:1,createdAt:0,purpose:'Open button',entry:'page',states:[{id:'page',snapshotId:'0',description:'Page',visualAnchors:[anchor],anchors:[{box:anchor,template:await fingerprint(screens[0].path,anchor)}],progressRegion:{x:0,y:0,width:1,height:1},doneWhen:'Button selected',settleMs:200,maxSettleMs:200,actions:[{id:'open',kind:'click',label:'blue button',when:'Not selected',box:{x:.05,y:.05,width:.05,height:.05}}]}]};
   const result=await runFlow(flow,contract,{}, {capture:async()=>screens[0],sleep:async()=>{},trace:async()=>{},choose:async(_p,choices)=>yes(choices.some(c=>c.id==='open')?(clicked?'done':'open'):'yes'),execute:async action=>{assert.ok(Math.abs(action.box!.x+action.box!.width/2-.5)<.001);clicked=true;return {};}});
   assert.equal(result.reason,'local_goal_observed');assert.equal(result.actions,1);
+}));
+
+
+test('animated backgrounds and broad anchor hints do not veto a stable click, but late target replacement does',async()=>fixture(async(screens)=>{
+  const box={x:.46,y:.46,width:.08,height:.08},anchor={x:0,y:0,width:1,height:1};
+  for(const covered of [false,true]){
+    let index=0,selected=0,inputs=0;
+    const cover=join(screens[0].path,'..','covered.png');
+    await sharp(screens[2].path).composite([{input:Buffer.from('<svg width="240" height="180"><rect x="85" y="60" width="70" height="60" fill="red"/></svg>')}]).png().toFile(cover);
+    const frames=[screens[1],covered?{...screens[2],id:'covered',path:cover}:screens[2]];
+    const result=await performAction(screens[0],{action:{id:'press',kind:'click',label:'blue button',intent:'Open',box},target:'blue button',grounded:{target:'blue button',source:screens[0],box},regions:[anchor]},undefined,{
+      trace:async()=>{},capture:async()=>frames[Math.min(index++,1)],
+      choose:async()=>{selected++;return yes(covered&&selected>1?'no':'yes');},
+      execute:async()=>{inputs++;return {};},
+    });
+    assert.equal(result.performed,!covered);assert.equal(inputs,covered?0:1);
+    if(!covered){assert.equal(selected,1);assert.equal(index,2);}
+  }
 }));

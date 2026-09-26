@@ -35,7 +35,7 @@ test('ny_locate defaults to coordinates, archives its private branch, and option
     assert.equal(result.content.filter((b:any)=>b.type==='image').length,1);
     assert.equal(JSON.parse(result.content[0].text).clicked,false);assert.equal(calls,1);
     const saved=await readdir(join(dir,'locate',result.details.searchId));assert.deepEqual(saved.sort(),['0.json','0.png']);
-    await assert.rejects(tool.execute('test',{...args,click:true},undefined,undefined,ctx),/requires anchor/);assert.equal(calls,1);
+    await assert.rejects(tool.execute('test',{...args,click:true},undefined,undefined,ctx),/requires expectation/);assert.equal(calls,1);
     // An explicitly requested click still cannot use a pre-resume screenshot.
     await assert.rejects(tool.execute('test',{...args,click:true,anchor:{x:0,y:0,width:.2,height:.2},expectation:'button opens'},undefined,undefined,ctx),/새 화면/);assert.equal(calls,2);
     await blockRun({reason:'Missing access',attempts:[],needed:'Human fixes access'});

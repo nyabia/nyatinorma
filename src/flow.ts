@@ -155,10 +155,10 @@ export async function runFlow(flow:Flow,contract:WorkContract,options:{maxAction
       const nowMatches=await matches(fresh);if(nowMatches.length!==1||nowMatches[0].id!==stateId){s=fresh;return await finish('screen_changed_during_selection');}
       const refreshed=(await candidates(state,fresh)).find(a=>a.id===selected.id);if(!refreshed){s=fresh;return await finish('target_changed_during_selection');}
       // Region drags still require the observed content to remain stable while the model was queued.
-      if(difference(await fingerprint(s.path,state.progressRegion),await fingerprint(fresh.path,state.progressRegion))>c.templateMaxError){s=fresh;lastAction='observation changed during inference';if(++waits>8)return await finish('unstable_screen');continue;}
+      if(refreshed.kind==='drag'&&difference(await fingerprint(s.path,state.progressRegion),await fingerprint(fresh.path,state.progressRegion))>c.templateMaxError){s=fresh;lastAction='observation changed during inference';if(++waits>8)return await finish('unstable_screen');continue;}
       const before=await fingerprint(fresh.path,state.progressRegion);check();
       const action:Candidate={...refreshed,intent:refreshed.when},key=`${stateId}/${action.id}`;
-      const performed=await performAction(fresh,{action,target:refreshed.kind==='click'?(refreshed.target??refreshed.label):undefined,grounded:grounded.get(key),regions:state.visualAnchors},signal,{capture:d.capture,execute:d.execute,choose:d.choose,check});
+      const performed=await performAction(fresh,{action,target:refreshed.kind==='click'?(refreshed.target??refreshed.label):undefined,grounded:grounded.get(key),regions:state.visualAnchors},signal,{capture:d.capture,execute:d.execute,choose:d.choose,check,trace:d.trace});
       calls+=performed.selectCalls;s=performed.snapshot;
       if(!performed.performed)return await finish(performed.reason);
       if(performed.grounded)grounded.set(key,performed.grounded);

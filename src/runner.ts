@@ -72,19 +72,19 @@ async function guardRepeatedAction(action:Candidate,fresh:Snapshot) {
 }
 // One observed drag or a point confirmed by ny_locate. The low-level path is not
 // exposed as a raw-coordinate click tool. Caller retains a per-run fresh capture.
-export async function actOnce(input:{snapshotId:string;action:Candidate;anchor:Box;expectation:string;grounded?:GroundedClick},signal?:AbortSignal,choose:typeof select=select) {
+export async function actOnce(input:{snapshotId:string;action:Candidate;anchor?:Box;expectation:string;grounded?:GroundedClick},signal?:AbortSignal,choose:typeof select=select) {
   const release=acquireInput();
   try{
     assertCanExecute();const original=await snapshot(input.snapshotId);requireFreshObservation(original.at);
     if(!input.expectation.trim())throw new Error('Describe the visible outcome you expect.');
-    await validateVisualAnchors([{box:input.anchor,template:await fingerprint(original.path,input.anchor)}],original.path,(await config()).templateMaxError);
+    if(input.anchor){validateBox(input.anchor);if(input.action.kind==='drag')await validateVisualAnchors([{box:input.anchor,template:await fingerprint(original.path,input.anchor)}],original.path,(await config()).templateMaxError);}
     const action={...input.action,box:input.action.box??resolveTarget(input.action,original.width,original.height).box,to:resolveDestination(input.action)};
-    const result=await performAction(original,{action,target:action.kind==='click'?(input.grounded?.target??action.label):undefined,grounded:input.grounded,regions:[input.anchor]},signal,{choose});
-    if(!result.performed)return {reason:result.reason,snapshot:result.snapshot};
+    const result=await performAction(original,{action,target:action.kind==='click'?(input.grounded?.target??action.label):undefined,grounded:input.grounded,regions:input.anchor?[input.anchor]:undefined},signal,{choose});
+    if(!result.performed)return {reason:result.reason,inputSent:false as const,snapshot:result.snapshot,instruction:'No input was sent. Inspect this returned current image and revise the action if needed; do not recapture merely because the previous observation changed.'};
     await trace({event:'dispatch',mode:'OBSERVED_ACTION',action:result.action,snapshotId:result.snapshot.id,expectation:input.expectation});
     await new Promise(r=>setTimeout(r,700));
     const after=await capture(signal);
-    return {reason:(result.input as any)?.focusPreserved===false?'foreground_changed: stop input':'verify_expected_outcome',expectation:input.expectation,beforeSnapshotId:result.snapshot.id,snapshot:after};
+    return {reason:(result.input as any)?.focusPreserved===false?'foreground_changed: stop input':'input_sent_outcome_unverified',inputSent:true as const,point:result.action?.box?{x:result.action.box.x+result.action.box.width/2,y:result.action.box.y+result.action.box.height/2}:undefined,instruction:'Input was sent. Inspect the returned image to assess the outcome; dispatch is not proof of success.',expectation:input.expectation,beforeSnapshotId:result.snapshot.id,snapshot:after};
   }finally{release();}
 }
 export async function runSelect(name:string,maxSteps:number,signal?:AbortSignal,onUpdate?:(s:string)=>void,choose:typeof select=select) {
@@ -125,14 +125,14 @@ export async function runSelect(name:string,maxSteps:number,signal?:AbortSignal,
         previousClick={id:action.id,fingerprint:now};
       }
       await guardRepeatedAction(action,fresh);
-      await trace({event:'dispatch',action,snapshotId:fresh.id});
-      let input:any;
+      let input:any,dispatched=action,dispatchSnapshot=fresh;
       if(action.kind==='wait')input=await execute(action,fresh,signal);
       else {
         const performed=await performAction(fresh,{action,target:action.kind==='click'?(action.target??action.label):undefined,grounded:grounded.get(action.id)},signal,{choose});
         if(!performed.performed)return {reason:performed.reason,snapshot:performed.snapshot};
-        if(performed.grounded)grounded.set(action.id,performed.grounded);input=performed.input;
+        if(performed.grounded)grounded.set(action.id,performed.grounded);input=performed.input;dispatched=performed.action!;dispatchSnapshot=performed.snapshot;
       }
+      await trace({event:'dispatch',action:dispatched,snapshotId:dispatchSnapshot.id});
       if(input)await trace({event:'input_result',actionId:action.id,input});
       onUpdate?.(`${action.label} · ${Math.round(decision.elapsedMs)} ms`);
       // A screen transition returns control to THINK on the next fresh observation.
