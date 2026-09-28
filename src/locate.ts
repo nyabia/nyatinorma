@@ -19,16 +19,32 @@ export function zoomCell(view:Box,index:number):{view:Box;point:Point}{
   const width=view.width/2,height=view.height/2;
   return {point,view:{x:Math.max(view.x,Math.min(view.x+view.width-width,point.x-width/2)),y:Math.max(view.y,Math.min(view.y+view.height-height,point.y-height/2)),width,height}};
 }
-/** Move only the proposed point. Native-pixel lower bound avoids ineffective
- * subpixel edits; half-pixel margins keep coordinates strictly inside the view.
+/** Move the proposed point across crop boundaries, but never outside the app.
+ * The crop controls step size only; half-pixel margins bound real coordinates.
  */
 export function movePoint(s:Pick<Snapshot,'width'|'height'>,view:Box,point:Point,index:number,scale=1/8):Point{
   if(!Number.isInteger(index)||index<0||index>=directions.length||!Number.isFinite(scale)||scale<=0)throw new Error('Invalid point move');
-  const [dx,dy]=directions[index],mx=Math.min(.5/s.width,view.width/2),my=Math.min(.5/s.height,view.height/2);
-  return {x:Math.max(view.x+mx,Math.min(view.x+view.width-mx,point.x+dx*Math.max(1/s.width,view.width*scale))),
-    y:Math.max(view.y+my,Math.min(view.y+view.height-my,point.y+dy*Math.max(1/s.height,view.height*scale)))};
+  const [dx,dy]=directions[index],mx=.5/s.width,my=.5/s.height;
+  return {x:Math.max(mx,Math.min(1-mx,point.x+dx*Math.max(1/s.width,view.width*scale))),
+    y:Math.max(my,Math.min(1-my,point.y+dy*Math.max(1/s.height,view.height*scale)))};
 }
 const samePoint=(a:Point,b:Point)=>Math.abs(a.x-b.x)<1e-12&&Math.abs(a.y-b.y)<1e-12;
+
+/** Follow a point approaching the crop edge, preserving zoom and real bounds. */
+function followPoint(view:Box,point:Point):Box{
+  const follow=(start:number,size:number,p:number)=>p<start+size*.2||p>start+size*.8?Math.max(0,Math.min(1-size,p-size/2)):start;
+  return {...view,x:follow(view.x,view.width,point.x),y:follow(view.y,view.height,point.y)};
+}
+
+/** Show every proposed MOVE endpoint, including those beyond the current crop.
+ * This is a temporary presentation view; it does not change zoom or step size. */
+function movePreviewView(view:Box,moves:Point[]):Box{
+  const x=Math.max(0,Math.min(view.x,...moves.map(p=>p.x-view.width*.05)));
+  const y=Math.max(0,Math.min(view.y,...moves.map(p=>p.y-view.height*.05)));
+  const right=Math.min(1,Math.max(view.x+view.width,...moves.map(p=>p.x+view.width*.05)));
+  const bottom=Math.min(1,Math.max(view.y+view.height,...moves.map(p=>p.y+view.height*.05)));
+  return {x,y,width:right-x,height:bottom-y};
+}
 
 /** Keep the candidate fixed while exposing native-pixel button edges. This is
  * a display scale, not a hitbox or a geometric substitute for visual judgment. */
@@ -77,7 +93,7 @@ export async function locate(s:Snapshot,input:LocateInput,deps:LocateDeps){
       [{id:'yes',label:dragStart?'YES: the pink crosshair is clearly on the described drag surface at a suitable start point; all local conditions hold':'YES: the pink crosshair is clearly inside the described target at a suitable clickable point; all local conditions hold'},
        {id:'no',label:dragStart?'NO: the crosshair is outside that surface or is not a suitable drag start':'NO: the crosshair is outside that target or is not a suitable clickable point'},
        {id:'uncertain',label:dragStart?'UNCERTAIN: surface identity or suitability as a drag start is unclear':'UNCERTAIN: target identity or clickability at the crosshair is not clear'}]:phase==='move'?
-      [...directions.map(([, ,name],i)=>({id:`move-${name}`,label:`${String.fromCharCode(65+i)}: move crosshair ${name} to the marked cyan point${samePoint(moves[i],frame.point)?' (unavailable at edge)':''}`})),
+      [...directions.map(([, ,name],i)=>({id:`move-${name}`,label:`${String.fromCharCode(65+i)}: move crosshair ${name} to the marked cyan point${samePoint(moves[i],frame.point)?' (unavailable at the actual app-window boundary)':''}`})),
        {id:'smaller',label:`HALVE MOVE DISTANCE: use smaller position adjustments${canShrink?'':' (already at one native pixel)'}`},
        {id:'search',label:'GRID SEARCH: return to choosing a region to zoom'},
        ...(canBack?[{id:'back',label:'ZOOM OUT: recover wider visual context'}]:[]),
@@ -87,12 +103,13 @@ export async function locate(s:Snapshot,input:LocateInput,deps:LocateDeps){
        ...(canBack?[{id:'back',label:'ZOOM OUT: target/context lost; inspect another region from the parent view'}]:[]),
        {id:'think',label:'THINK: target absent or ambiguous; no viable visual search remains'}];
     const objective=frame.history.length?'Continue locating the original target under the same local constraints.':`Locate a ${dragStart?'drag start':'point'} only; no input has been sent. Target: ${input.target}\nLocal constraints: ${input.constraints??'None beyond the target.'}\nUse the fixed screenshot, never invent hidden content. This is visual grounding, not task planning. The pink crosshair is an annotation, not app UI.`;
-    const question=phase==='verify'?(dragStart?'Judge ONLY the existing pink crosshair. It must lie on the intended surface at a safe start point for the proposed drag, not on a blocking control. Do not assume it must be clickable. Answer YES, NO or UNCERTAIN using its option letter.':'Judge ONLY the existing pink crosshair. Any point safely inside the intended clickable target body is acceptable; it need not be the exact centre. For a bounded button, icon or toggle, require clear interior clearance from its edge. An associated text caption or OFF/ON label outside the control does not prove that location is clickable. Reject points on the rim, outside the visible body, or between neighbouring controls; use MOVE or zoom to correct them instead of approving a nearby point. If the target description or user context explicitly establishes a tap-anywhere input surface, any unobstructed point on that surface is valid: do not require a rendered button or aim for its instructional caption. For such broad surfaces, prefer blank backing areas and reject points on embedded cards, item icons, or child controls that may intercept taps. Otherwise, do not assume arbitrary background is clickable. Do not choose between alternative locations. Answer YES, NO or UNCERTAIN using its option letter.'):phase==='move'?'Adjust only the proposed crosshair, never the real pointer. Cyan points A–H show the eight possible moves relative to the pink crosshair. Choose a point toward the target, halve the move distance for finer adjustments, or return to grid search/zoom out. Every moved point must pass a separate YES/NO/UNCERTAIN check.':'The current candidate was not confirmed. The image has a 3x3 grid labelled A–I. Pick a cell containing a suitable point of the target. Multiple cells may be valid: choose any untried suitable one. This only zooms and never clicks. Already explored cells: '+[...frame.tried].map(i=>String.fromCharCode(65+i)).join(', ')+'.';
+    const question=phase==='verify'?(dragStart?'Judge ONLY the existing pink crosshair. It must lie on the intended surface at a safe start point for the proposed drag, not on a blocking control. Do not assume it must be clickable. Answer YES, NO or UNCERTAIN using its option letter.':'Judge ONLY the existing pink crosshair. Any point safely inside the intended clickable target body is acceptable; it need not be the exact centre of the target or the displayed crop. A target near the actual app-window corner is valid if the point is inside its clickable body; do not keep moving just to centre the image. For a bounded button, icon or toggle, require clear interior clearance from its edge. An associated text caption or OFF/ON label outside the control does not prove that location is clickable. Reject points on the rim, outside the visible body, or between neighbouring controls; use MOVE or zoom to correct them instead of approving a nearby point. If the target description or user context explicitly establishes a tap-anywhere input surface, any unobstructed point on that surface is valid: do not require a rendered button or aim for its instructional caption. For such broad surfaces, prefer blank backing areas and reject points on embedded cards, item icons, or child controls that may intercept taps. Otherwise, do not assume arbitrary background is clickable. Do not choose between alternative locations. Answer YES, NO or UNCERTAIN using its option letter.'):phase==='move'?'Adjust only the proposed crosshair, never the real pointer. Cyan points A–H show the eight possible moves relative to the pink crosshair. MOVE can cross the previous crop boundary: the magnified view follows the point while preserving zoom. Only the actual app-window boundary limits movement. This preview includes neighbouring pixels so all available cyan endpoints remain visible. Choose a point toward the target, halve the move distance for finer adjustments, or return to grid search/zoom out. Do not move solely to centre the image; a correct off-centre point is acceptable. Every moved point must pass a separate YES/NO/UNCERTAIN check.':'The current candidate was not confirmed. The image has a 3x3 grid labelled A–I. Pick a cell containing a suitable point of the target. Multiple cells may be valid: choose any untried suitable one. This only zooms and never clicks. Already explored cells: '+[...frame.tried].map(i=>String.fromCharCode(65+i)).join(', ')+'.';
     // A tiny crop can make a caption look like the control itself. Show the
     // same proposed point in the full app for click identity as well as drags.
-    const hasContext=frame.view.width<1||frame.view.height<1;
-    const state=`${objective}\n${question}${dragStart?' A scrollable surface includes its ordinary cards, rows, and items: an item being clickable alone does not make it an unsuitable drag start. Exclude separate fixed controls and overlays.':''}${hasContext?' The LEFT image shows full-window context with the same pink point; the RIGHT image is the enlarged search view. Grid and move labels refer only to the RIGHT image.':''}\nFull-window crop: ${JSON.stringify(frame.view)}; candidate: ${JSON.stringify(frame.point)}; depth=${frames.length-1}.`;
-    let image=await locateImage(s,frame,phase==='search',phase==='move'?moves:[]);
+    const displayView=phase==='move'?movePreviewView(frame.view,moves):frame.view;
+    const hasContext=displayView.width<1||displayView.height<1;
+    const state=`${objective}\n${question}${dragStart?' A scrollable surface includes its ordinary cards, rows, and items: an item being clickable alone does not make it an unsuitable drag start. Exclude separate fixed controls and overlays.':''}${hasContext?' The LEFT image shows full-window context with the same pink point; the RIGHT image is the enlarged search view. Grid and move labels refer only to the RIGHT image.':''}\nSearch crop: ${JSON.stringify(frame.view)}; displayed crop: ${JSON.stringify(displayView)}; candidate: ${JSON.stringify(frame.point)}; depth=${frames.length-1}.`;
+    let image=await locateImage(s,{view:displayView,point:frame.point},phase==='search',phase==='move'?moves:[]);
     if(hasContext){
       const context=await sharp(await locateImage(s,{view:{x:0,y:0,width:1,height:1},point:frame.point},false)).resize({width:480}).png().toBuffer();
       const detail=await sharp(image).resize({width:640,height:800,fit:'inside'}).png().toBuffer();
@@ -151,7 +168,10 @@ export async function locate(s:Snapshot,input:LocateInput,deps:LocateDeps){
     if(choice.startsWith('move-')){
       const direction=directions.findIndex(([, ,name])=>choice===`move-${name}`);
       if(direction<0)return finish('invalid_choice',frame);
-      frame.point=moves[direction];frame.adjusting=true;frame.phase='verify';frame.history=history;continue;
+      frame.point=moves[direction];
+      const nextView=followPoint(frame.view,frame.point);
+      if(nextView.x!==frame.view.x||nextView.y!==frame.view.y)frame.tried.clear();
+      frame.view=nextView;frame.adjusting=true;frame.phase='verify';frame.history=history;continue;
     }
     if(index>8||!canZoom)return finish('resolution_limit',frame);
     frame.tried.add(index);
