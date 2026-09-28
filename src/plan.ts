@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {dataDir,saveJSON} from './config.js';
-import {task} from './tasks.js';
+import {saveJSON} from './config.js';
 import {snapshot,trace} from './store.js';
 import {activeRunPath} from './runs.js';
 import {currentRun,requireRun} from './runtime.js';

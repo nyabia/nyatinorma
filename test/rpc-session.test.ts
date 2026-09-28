@@ -21,10 +21,11 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     const commands=await request('get_commands');assert.ok(commands.commands.some((c:any)=>c.name==='preset'));
     await say('안녕. 게임은 조작하지 마.');assert.equal(state().run.anonymous,true);const anonymous=state().run.id;
     assert.equal(state().run.preset.id,'scratch');assert.deepEqual(state().knowledge.availableScenarios,[]);assert.equal(state().knowledge.scenario,null);
-    assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_drag'));
+    assert.deepEqual(payloads.at(-1).tools.map((tool:any)=>tool.function?.name).filter((name:string)=>name?.startsWith('ny_')).sort(),['ny_act','ny_block','ny_knowledge','ny_observe','ny_recall','ny_time','ny_tools','ny_wait']);
     const act=payloads.at(-1).tools.find((tool:any)=>tool.function?.name==='ny_act').function;
-    assert.ok(act.parameters.properties.goal);assert.equal(act.parameters.properties.point,undefined);
+    assert.ok(act.parameters.properties.goal);assert.ok(act.parameters.properties.resume);assert.ok(act.parameters.properties.until);assert.equal(act.parameters.properties.point,undefined);
     assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));
+    assert.ok(payloads.at(-1).tools.every((tool:any)=>tool.function?.name.startsWith('ny_')),'Tool groups must not re-enable disabled coding tools');
     assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_task'));
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_time'));
     nextCalls.push({function:{name:'ny_time',arguments:{operation:'set_deadline',nextLocalTime:'03:00'}}});
@@ -32,7 +33,7 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     assert.ok(state().run.stopAt);assert.ok(Date.parse(state().run.stopAt)>Date.now());
     nextCalls.push({function:{name:'ny_time',arguments:{operation:'clear_deadline'}}});
     await say('테스트 마감을 해제하고 게임은 조작하지 마.');assert.equal(state().run.stopAt,null);
-    assert.ok(payloads.at(-1).tools.find((tool:any)=>tool.function?.name==='ny_drag').function.parameters.properties.gridPoint);
+    assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_drag'));
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_knowledge'));
     await request('prompt',{message:'/save 내 테스트 기록'});
     await say('저장한 기록 이름만 확인해. 게임 조작하지 마.');const first=state().run;assert.equal(first.id,anonymous);assert.equal(first.title,'내 테스트 기록');assert.equal(first.anonymous,false);
@@ -56,9 +57,9 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     await say('프리셋 관리 도구만 불러와. 게임은 조작하지 마.');
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_task'));
     assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));
+    assert.ok(payloads.at(-1).tools.every((tool:any)=>tool.function?.name.startsWith('ny_')),'Tool groups must not re-enable disabled coding tools');
     const tool=(name:string)=>payloads.at(-1).tools.find((t:any)=>t.function.name===name).function;
-    assert.equal(tool('ny_drag').parameters.properties.intent.enum,undefined);
-    assert.equal(tool('ny_drag').parameters.properties.stars,undefined);
+    assert.ok(tool('ny_plan').parameters.properties.steps);
     assert.ok(tool('ny_checkpoint').parameters.properties.data);
     assert.doesNotMatch(payloads.at(-1).messages.find((m:any)=>m.role==='system').content,/trickcal-theater|select_story|select_season|start_battle/);
     nextCalls.push({function:{name:'ny_task',arguments:{operation:'save',id:'learned-navigation',name:'학습한 탐색 절차',objective:'관측한 목록 탐색',instructions:['현재 창부터 관측'],successCriteria:['요청한 항목 확인']}}});
@@ -66,6 +67,16 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     const snapshotId='1790000000000-1234abcd';await writeFile(join(dir,'captures',snapshotId+'.json'),JSON.stringify({id:snapshotId}));
     nextCalls.push({function:{name:'ny_checkpoint',arguments:{snapshotId,note:'임의 앱의 목록 확인',key:'list-a',data:{visibleItems:['a','b']},state:{page:'list'}}}});
     await say('범용 체크포인트 도구 시험. 입력은 하지 마.');assert.equal(state().state.page,'list');assert.deepEqual(state().recentCheckpoints[0][1].data,{visibleItems:['a','b']});
+
+    const pendingRun=state().run.id,pendingPath=join(dir,'runs',pendingRun,'execution-continuation.json');
+    await writeFile(pendingPath,JSON.stringify({schemaVersion:1,id:'00000000-0000-4000-8000-000000000000',runId:pendingRun,lastInput:{delivery:'sent',outcome:'unresolved'}}));
+    nextCalls.push({function:{name:'ny_run',arguments:{operation:'detach'}}});
+    await say('미확정 입력이 있는 기록의 전환 차단 시험. 게임 입력은 하지 마.');assert.equal(state().run.id,pendingRun);
+    await rm(pendingPath);
+    nextCalls.push({function:{name:'ny_time',arguments:{operation:'set_deadline',nextLocalTime:'03:00'}}});
+    await say('Set a test deadline; no game input.');const cutoff=state().run.stopAt;
+    nextCalls.push({function:{name:'ny_run',arguments:{operation:'start',title:'Deadline inheritance test'}}});
+    await say('Create a separate test record while keeping the deadline.');assert.notEqual(state().run.id,pendingRun);assert.equal(state().run.stopAt,cutoff);
 
     const blockedId=state().run.id,runFile=join(dir,'runs',blockedId,'run.json'),callsBeforeBlock=payloads.length;
     nextCalls.push([
@@ -88,7 +99,7 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     const startResume=events.length;
     await request('prompt',{message:'/play 외부 승인 완료. 실제 입력 없이 재개 상태만 확인해.'});
     await wait(()=>events.slice(startResume).find(e=>e.type==='agent_settled'));
-    assert.equal(state().run.status,'ready');assert.ok(state().run.blocked.resumedAt);assert.equal(state().run.id,blockedId);
+    assert.equal(state().run.status,'ready');assert.equal(state().run.blocked,undefined,'Resolved block reports must not be injected as current blockers');assert.ok(JSON.parse(await readFile(runFile,'utf8')).blocked.resumedAt,'The historical report remains on disk');assert.equal(state().run.id,blockedId);
 
   }finally{child.kill('SIGTERM');await new Promise<void>(r=>{if(child.exitCode!==null)r();else child.once('exit',()=>r());});server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await rm(dir,{recursive:true,force:true});}
 });

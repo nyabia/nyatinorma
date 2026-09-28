@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import {spawn} from 'node:child_process';
 import {resolve} from 'node:path';
-import {writeFile,access} from 'node:fs/promises';
+import {access} from 'node:fs/promises';
 import {config,root,dataDir,saveJSON} from './config.js';
 import {native,capture,closeDesktop} from './desktop.js';
 import {select,chat} from './ollama.js';
-import {initTasks,task} from './tasks.js';
+import {initTasks} from './tasks.js';
 import {initializePiSettings} from './settings.js';
 
 const c=await config();await initTasks();
@@ -26,7 +26,7 @@ try {
     await saveJSON(resolve(dataDir,'probe.json'),result);console.log(JSON.stringify(result,null,2));
     if(result.choice!=='two')process.exitCode=1;
   }else if(command==='vision-probe'){
-    const {readFile}=await import('node:fs/promises');const sharp=(await import('sharp')).default;
+    const sharp=(await import('sharp')).default;
     const s=await capture();const image=await sharp(s.path).resize({width:1050}).png().toBuffer();
     const start=performance.now();const response=await chat({think:false,messages:[{role:'user',content:'이 앱 화면의 주요 메뉴와 보이는 상태를 짧게 설명하세요. 보이지 않는 것은 추측하지 마세요.',images:[image.toString('base64')]}],options:{num_predict:200}});
     console.log(JSON.stringify({snapshotId:s.id,elapsedMs:performance.now()-start,message:response.message,metrics:{prefillMs:response.prompt_eval_duration/1e6,decodeMs:response.eval_duration/1e6}},null,2));

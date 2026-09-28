@@ -91,6 +91,16 @@ test('an initial crop can zoom out to the full image instead of being trapped at
   assert.equal(result.reason,'located');assert.deepEqual(result.point,{x:.5,y:.5});assert.deepEqual(result.view,{x:0,y:0,width:1,height:1});
 }));
 
+test('drag start verification asks about the surface and can escape a wrong crop',async()=>fixture(async s=>{
+  const seen:string[]=[];let calls=0;
+  const result=await locate(s,{target:'scrollable list',purpose:'drag-start',view:{x:0,y:0,width:.25,height:.25}},{minMass:.5,minMargin:.2,choose:async(state,choices)=>{
+    seen.push(state);if(calls===0)assert.match(choices[0].label,/drag surface at a suitable start point/);
+    return decision(['no','back','yes'][calls++]);
+  }});
+  assert.equal(result.reason,'located');assert.deepEqual(result.view,{x:0,y:0,width:1,height:1});
+  assert.ok(seen.every(state=>!state.includes('clickable target')));
+}));
+
 
 test('fine movement keeps the view, supports smaller steps, and requires confirmation after every move',async()=>fixture(async s=>{
   const sequence=['no','move','smaller','move-right','no','move-down','yes'];let calls=0;

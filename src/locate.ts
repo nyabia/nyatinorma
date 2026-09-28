@@ -8,7 +8,7 @@ type Choice={id:string;label:string};
 type Phase='verify'|'search'|'move';
 const directions=[[-1,-1,'up-left'],[0,-1,'up'],[1,-1,'up-right'],[-1,0,'left'],[1,0,'right'],[-1,1,'down-left'],[0,1,'down'],[1,1,'down-right']] as const;
 type Frame={view:Box;point:Point;history:SelectHistory;phase:Phase;tried:Set<number>;adjusting:boolean;moveScale:number};
-export type LocateInput={target:string;constraints?:string;view?:Box;maxSteps?:number;minRegionPixels?:number;signal?:AbortSignal};
+export type LocateInput={target:string;constraints?:string;view?:Box;maxSteps?:number;minRegionPixels?:number;signal?:AbortSignal;purpose?:'click'|'drag-start'};
 export type LocateStep={step:number;depth:number;phase:Phase;view:Box;point:Point;state:string;choices:Choice[];decision:Decision;image:Buffer};
 export type LocateDeps={choose:(state:string,choices:Choice[],signal:AbortSignal|undefined,image:string,history:SelectHistory)=>Promise<Decision>;minMass:number;minMargin:number;check?:()=>void;onStep?:(step:LocateStep)=>Promise<void>};
 
@@ -46,6 +46,7 @@ export async function locateImage(s:Snapshot,frame:Pick<Frame,'view'|'point'>,gr
  * prefix. The main pi transcript and the original screenshot are never edited.
  */
 export async function locate(s:Snapshot,input:LocateInput,deps:LocateDeps){
+  const dragStart=input.purpose==='drag-start';
   const view=input.view??{x:0,y:0,width:1,height:1};validateBox(view);
   const maxSteps=input.maxSteps??20,minPixels=input.minRegionPixels??24;
   if(!input.target.trim()||!Number.isInteger(maxSteps)||maxSteps<1||maxSteps>20||!Number.isFinite(minPixels)||minPixels<4)throw new Error('Invalid locate target or budget');
@@ -62,25 +63,33 @@ export async function locate(s:Snapshot,input:LocateInput,deps:LocateDeps){
     const canBack=frames.length>1||frame.view.width<1||frame.view.height<1;
     const moves=directions.map((_,i)=>movePoint(s,frame.view,frame.point,i,frame.moveScale));
     const canShrink=Math.max(frame.view.width*s.width,frame.view.height*s.height)*frame.moveScale>1;
-    // Confirmation is a separate semantic question. Other equally valid click
+    // Confirmation is a separate semantic question. Other equally valid
     // locations must not compete with the current point in its score margin.
     const choices:Choice[]=phase==='verify'?
-      [{id:'yes',label:'YES: the pink crosshair is clearly inside the described target at a suitable clickable point; all local conditions hold'},
-       {id:'no',label:'NO: the crosshair is outside that target or is not a suitable clickable point'},
-       {id:'uncertain',label:'UNCERTAIN: target identity or clickability at the crosshair is not clear'}]:phase==='move'?
+      [{id:'yes',label:dragStart?'YES: the pink crosshair is clearly on the described drag surface at a suitable start point; all local conditions hold':'YES: the pink crosshair is clearly inside the described target at a suitable clickable point; all local conditions hold'},
+       {id:'no',label:dragStart?'NO: the crosshair is outside that surface or is not a suitable drag start':'NO: the crosshair is outside that target or is not a suitable clickable point'},
+       {id:'uncertain',label:dragStart?'UNCERTAIN: surface identity or suitability as a drag start is unclear':'UNCERTAIN: target identity or clickability at the crosshair is not clear'}]:phase==='move'?
       [...directions.map(([, ,name],i)=>({id:`move-${name}`,label:`${String.fromCharCode(65+i)}: move crosshair ${name} to the marked cyan point${samePoint(moves[i],frame.point)?' (unavailable at edge)':''}`})),
        {id:'smaller',label:`HALVE MOVE DISTANCE: use smaller position adjustments${canShrink?'':' (already at one native pixel)'}`},
        {id:'search',label:'GRID SEARCH: return to choosing a region to zoom'},
        ...(canBack?[{id:'back',label:'ZOOM OUT: recover wider visual context'}]:[]),
        {id:'think',label:'THINK: target cannot be reliably located'}]:
-      [...Array.from({length:9},(_,i)=>({id:`cell-${i+1}`,label:`Grid ${String.fromCharCode(65+i)}: inspect a click point in this cell${frame.tried.has(i)?' (already explored; choose a different cell)':''}`})),
+      [...Array.from({length:9},(_,i)=>({id:`cell-${i+1}`,label:`Grid ${String.fromCharCode(65+i)}: inspect a suitable ${dragStart?'drag start':'click point'} in this cell${frame.tried.has(i)?' (already explored; choose a different cell)':''}`})),
        {id:'move',label:'MOVE CROSSHAIR: target is nearby; adjust position without zooming'},
        ...(canBack?[{id:'back',label:'ZOOM OUT: target/context lost; inspect another region from the parent view'}]:[]),
        {id:'think',label:'THINK: target absent or ambiguous; no viable visual search remains'}];
-    const objective=frame.history.length?'Continue locating the original target under the same local constraints.':`Locate a point only; no input has been sent. Target: ${input.target}\nLocal constraints: ${input.constraints??'None beyond the target.'}\nUse the fixed screenshot, never invent hidden content. This is visual grounding, not task planning. The pink crosshair is an annotation, not app UI.`;
-    const question=phase==='verify'?'Judge ONLY the existing pink crosshair. Any point safely inside the intended clickable target is acceptable; it need not be the exact centre. Do not choose between alternative locations. Answer YES, NO or UNCERTAIN using its option letter.':phase==='move'?'Adjust only the proposed crosshair, never the real pointer. Cyan points A–H show the eight possible moves relative to the pink crosshair. Choose a point toward the target, halve the move distance for finer adjustments, or return to grid search/zoom out. Every moved point must pass a separate YES/NO/UNCERTAIN check.':'The current candidate was not confirmed. The image has a 3x3 grid labelled A–I. Pick a cell containing a suitable point of the target. Multiple cells may be valid: choose any untried suitable one. This only zooms and never clicks. Already explored cells: '+[...frame.tried].map(i=>String.fromCharCode(65+i)).join(', ')+'.';
-    const state=`${objective}\n${question}\nFull-window crop: ${JSON.stringify(frame.view)}; candidate: ${JSON.stringify(frame.point)}; depth=${frames.length-1}.`;
-    const image=await locateImage(s,frame,phase==='search',phase==='move'?moves:[]);check();
+    const objective=frame.history.length?'Continue locating the original target under the same local constraints.':`Locate a ${dragStart?'drag start':'point'} only; no input has been sent. Target: ${input.target}\nLocal constraints: ${input.constraints??'None beyond the target.'}\nUse the fixed screenshot, never invent hidden content. This is visual grounding, not task planning. The pink crosshair is an annotation, not app UI.`;
+    const question=phase==='verify'?(dragStart?'Judge ONLY the existing pink crosshair. It must lie on the intended surface at a safe start point for the proposed drag, not on a blocking control. Do not assume it must be clickable. Answer YES, NO or UNCERTAIN using its option letter.':'Judge ONLY the existing pink crosshair. Any point safely inside the intended clickable target area is acceptable; it need not be the exact centre. If the target description or user context explicitly establishes a tap-anywhere input surface, any unobstructed point on that surface is valid: do not require a rendered button or aim for its instructional caption. For such broad surfaces, prefer blank backing areas and reject points on embedded cards, item icons, or child controls that may intercept taps. Otherwise, do not assume arbitrary background is clickable. Do not choose between alternative locations. Answer YES, NO or UNCERTAIN using its option letter.'):phase==='move'?'Adjust only the proposed crosshair, never the real pointer. Cyan points A–H show the eight possible moves relative to the pink crosshair. Choose a point toward the target, halve the move distance for finer adjustments, or return to grid search/zoom out. Every moved point must pass a separate YES/NO/UNCERTAIN check.':'The current candidate was not confirmed. The image has a 3x3 grid labelled A–I. Pick a cell containing a suitable point of the target. Multiple cells may be valid: choose any untried suitable one. This only zooms and never clicks. Already explored cells: '+[...frame.tried].map(i=>String.fromCharCode(65+i)).join(', ')+'.';
+    const hasContext=dragStart&&(frame.view.width<1||frame.view.height<1);
+    const state=`${objective}\n${question}${dragStart?' A scrollable surface includes its ordinary cards, rows, and items: an item being clickable alone does not make it an unsuitable drag start. Exclude separate fixed controls and overlays.':''}${hasContext?' The LEFT image shows full-window context with the same pink point; the RIGHT image is the enlarged search view. Grid and move labels refer only to the RIGHT image.':''}\nFull-window crop: ${JSON.stringify(frame.view)}; candidate: ${JSON.stringify(frame.point)}; depth=${frames.length-1}.`;
+    let image=await locateImage(s,frame,phase==='search',phase==='move'?moves:[]);
+    if(hasContext){
+      const context=await sharp(await locateImage(s,{view:{x:0,y:0,width:1,height:1},point:frame.point},false)).resize({width:480}).png().toBuffer();
+      const detail=await sharp(image).resize({width:640,height:800,fit:'inside'}).png().toBuffer();
+      const cm=await sharp(context).metadata(),dm=await sharp(detail).metadata();
+      image=await sharp({create:{width:490+dm.width!,height:Math.max(cm.height!,dm.height!),channels:3,background:'white'}}).composite([{input:context,left:0,top:0},{input:detail,left:490,top:0}]).png().toBuffer();
+    }
+    check();
     const decision=await deps.choose(state,choices,input.signal,image.toString('base64'),frame.history);calls++;check();
     selection={phase,choice:decision.choice,legalMass:decision.legalMass,margin:decision.margin,truncated:decision.truncated,reason:decision.reason};
     await deps.onStep?.({step,depth:frames.length-1,phase,view:frame.view,point:frame.point,state,choices,decision,image});check();

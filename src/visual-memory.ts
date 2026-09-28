@@ -30,4 +30,20 @@ export class VisualMemory {
     const label=Buffer.from('<svg width="1050" height="30"><rect width="1050" height="30" fill="white"/><text x="10" y="21" font-size="17">PREVIOUSLY SEEN REGION</text><text x="535" y="21" font-size="17">CURRENT REGION</text></svg>');
     return (await sharp({create:{width,height:meta.height!+30+height,channels:3,background:'white'}}).composite([{input:full,top:0,left:0},{input:label,top:meta.height!,left:0},{input:before,top:meta.height!+30,left:0},{input:now,top:meta.height!+30,left:530}]).png().toBuffer()).toString('base64');
   }
+  /** Fixed-size visual working memory for SELECT, never appended to parent history.
+   * Keep a wide strip wide: side-by-side full screenshots make small titles unreadable. */
+  async scrollComparison(current:Snapshot,before?:Snapshot,reference?:Snapshot){
+    const width=1050,full=await sharp(current.path).resize({width:800,withoutEnlargement:true}).png().toBuffer();
+    const earlier=reference??this.frames[0]?.snapshot;
+    const views=[...(earlier&&earlier.id!==before?.id&&earlier.id!==current.id?[{snapshot:earlier,label:'EARLIER SEARCH VIEW (not the immediately preceding frame)'}]:[]),...(before?[{snapshot:before,label:'BEFORE LAST DRAG'}]:[]),{snapshot:current,label:'CURRENT SCROLL SURFACE'}];
+    let height=(await sharp(full).metadata()).height!;
+    const layers=[{input:full,left:0,top:0}];
+    for(const view of views){
+      const detail=await sharp(await crop(view.snapshot.path,this.region,width)).resize({width,height:500,fit:'inside',withoutEnlargement:true}).png().toBuffer();
+      const label=Buffer.from(`<svg width="${width}" height="28"><rect width="${width}" height="28" fill="white"/><text x="10" y="20" font-size="17">${view.label}</text></svg>`);
+      layers.push({input:label,left:0,top:height},{input:detail,left:0,top:height+28});
+      height+=28+(await sharp(detail).metadata()).height!;
+    }
+    return (await sharp({create:{width,height,channels:3,background:'white'}}).composite(layers).png().toBuffer()).toString('base64');
+  }
 }

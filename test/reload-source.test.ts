@@ -49,6 +49,9 @@ test('pi reload refreshes changed local runtime exports used by action tools', {
   await writeFile(path,current);
   await writeFile(guardPath,guard);
   await command('prompt',{message:'/reload'});
+  next={function:{name:'ny_tools',arguments:{operation:'enable',group:'legacy'}}};
+  const enableStart=events.length;await command('prompt',{message:'Enable legacy tools for this validation only.'});
+  await wait(()=>events.slice(enableStart).some(e=>e.type==='agent_settled'));
   next={function:{name:'ny_drag',arguments:{snapshotId:'1790000000000-1234abcd',label:'test',intent:'test',point:{x:.5,y:.5},to:{x:.2,y:.5},anchor:{x:.1,y:.1,width:.1,height:.1},expectation:'test'}}};
   const start=events.length;await command('prompt',{message:'Test validation only; the snapshot intentionally does not exist.'});
   await wait(()=>events.slice(start).some(e=>e.type==='agent_settled'));

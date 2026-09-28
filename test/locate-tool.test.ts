@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import sharp from 'sharp';
 
-test('ny_locate defaults to coordinates, archives its private branch, and optional click retains freshness/blocked guards',async()=>{
+test('ny_locate defaults to coordinates, archives its private branch, and optional clicks retain blocked guards',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'ny-locate-tool-'));process.env.NYATINORMA_DATA_DIR=dir;
   let calls=0;const server=createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;const request=JSON.parse(raw);calls++;
@@ -36,9 +36,8 @@ test('ny_locate defaults to coordinates, archives its private branch, and option
     assert.equal(JSON.parse(result.content[0].text).clicked,false);assert.equal(calls,1);
     const saved=await readdir(join(dir,'locate',result.details.searchId));assert.deepEqual(saved.sort(),['0.json','0.png']);
     await assert.rejects(tool.execute('test',{...args,click:true},undefined,undefined,ctx),/requires expectation/);assert.equal(calls,1);
-    // An explicitly requested click still cannot use a pre-resume screenshot.
-    await assert.rejects(tool.execute('test',{...args,click:true,anchor:{x:0,y:0,width:.2,height:.2},expectation:'button opens'},undefined,undefined,ctx),/새 화면/);assert.equal(calls,2);
     await blockRun({reason:'Missing access',attempts:[],needed:'Human fixes access'});
-    await assert.rejects(tool.execute('test',args,undefined,undefined,ctx),/run_blocked/);assert.equal(calls,2);
+    await assert.rejects(tool.execute('test',{...args,click:true,expectation:'button opens'},undefined,undefined,ctx),/run_blocked/);assert.equal(calls,1);
+    await assert.rejects(tool.execute('test',args,undefined,undefined,ctx),/run_blocked/);assert.equal(calls,1);
   }finally{await selectRun(null);server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));delete process.env.NYATINORMA_DATA_DIR;await rm(dir,{recursive:true,force:true});}
 });

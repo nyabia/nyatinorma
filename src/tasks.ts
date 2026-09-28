@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import {readFile,readdir,mkdir,appendFile} from 'node:fs/promises';
+import {readFile,readdir,appendFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {dataDir,initialize,saveJSON} from './config.js';
 import {currentRun,requireRun} from './runtime.js';

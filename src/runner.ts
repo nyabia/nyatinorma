@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import sharp from 'sharp';
 import {config} from './config.js';
-import {capture,execute} from './desktop.js';
-import {fingerprint,difference,validateBox,validateVisualAnchors,matchTarget,gridRegion} from './vision.js';
-import {snapshot,loadSet,saveSet,setVersion,recentTrace,trace} from './store.js';
+import {fingerprint,validateBox,validateVisualAnchors,matchTarget,gridRegion} from './vision.js';
+import {snapshot,loadSet,saveSet,setVersion,trace} from './store.js';
 import {task,safeId} from './tasks.js';
 import {checkCandidate} from './policy.js';
 import {select} from './ollama.js';
 import type {Candidate,SelectSet,Snapshot,Box} from './types.js';
 import {requireFreshObservation} from './runtime.js';
-import {acquireInput} from './input-lock.js';
 import {resolveTarget,resolveDestination} from './targeting.js';
-import {performAction,whole,type GroundedClick} from './action-runtime.js';
+import {whole,type GroundedClick} from './action-runtime.js';
+import {runExecution} from './execution-controller.js';
+import {runFlow,cacheFlow,type WorkContract,type Flow} from './flow.js';
+import type {ExecutionCandidate} from './execution-contract.js';
+import {createHash} from 'node:crypto';
 import {assertCanExecute} from './execution-state.js';
 
 export async function defineSet(input:{name:string;screen:string;purpose?:string;anchors?:string[];visualAnchors?:Box[];visualAnchorRegions?:string[][];snapshotId:string;candidates:Candidate[]},persist=true) {
@@ -59,93 +60,34 @@ export async function validateSet(set:SelectSet,s:Snapshot) {
   return {valid,rejected};
 }
 
-async function guardRepeatedAction(action:Candidate,fresh:Snapshot) {
-  if(action.kind!=='click'||!action.box)return;
-  const last=(await recentTrace(20)).findLast(e=>e.event==='dispatch');
-  if(!last?.action?.box||last.action.kind!=='click')return;
-  const a=action.box,b=last.action.box;
-  if(Math.abs(a.x+a.width/2-b.x-b.width/2)>.005||Math.abs(a.y+a.height/2-b.y-b.height/2)>.005)return;
-  const before=await snapshot(last.snapshotId);
-  const whole={x:0,y:0,width:1,height:1};
-  if(difference(await fingerprint(before.path,whole),await fingerprint(fresh.path,whole))<.015)
-    throw new Error('Repeated click on an unchanged screen blocked. Observe/crop and revise target or wait; do not retry the same action unchanged.');
+/** Compatibility entry point: one grounded input, then the shared outcome loop. */
+export async function actOnce(input:{snapshotId:string;action:Candidate;anchor?:Box;expectation:string;grounded?:GroundedClick;work?:WorkContract},signal?:AbortSignal,choose:typeof select=select){
+  assertCanExecute();const original=await snapshot(input.snapshotId);
+  if(!input.expectation.trim())throw new Error('Describe the visible outcome you expect.');
+  if(input.anchor)validateBox(input.anchor);
+  if(!['click','drag'].includes(input.action.kind))throw new Error('Expected a click or drag');
+  const action={...input.action,box:input.action.box??resolveTarget(input.action,original.width,original.height).box,to:resolveDestination(input.action)};
+  const candidate:ExecutionCandidate={id:'observed-action',kind:action.kind as 'click'|'drag',label:action.label,when:action.intent,expectation:input.expectation,
+    ...(action.kind==='click'?{target:input.grounded?.target??action.label,grounded:input.grounded}:{}),preparedAction:action};
+  const result=await runExecution({goal:`${action.label}: ${input.expectation}`,until:input.expectation,maxActions:1},async()=>({description:`Single observed action: ${action.label}`,actions:[candidate]}),
+    input.work??{revision:'observed-action',requests:[action.intent,input.expectation]},{signal},{choose});
+  const inputSent=result.lastInput.delivery==='sent';
+  return {...result,inputSent,point:inputSent?result.lastInput.point:undefined,expectation:input.expectation,beforeSnapshotId:result.lastInput.beforeSnapshotId,
+    snapshot:result.snapshot??original,instruction:result.status==='done'?'The local expected result was observed.':result.lastInput.delivery==='unknown'?'Input delivery is unknown; resume this execution to inspect before any further input.':inputSent?'Input was sent. Its result is preserved in this execution; do not blindly repeat.':'No input was sent. Use the returned current image and the reported decision.'};
 }
-// One observed drag or a point confirmed by ny_locate. The low-level path is not
-// exposed as a raw-coordinate click tool. Caller retains a per-run fresh capture.
-export async function actOnce(input:{snapshotId:string;action:Candidate;anchor?:Box;expectation:string;grounded?:GroundedClick},signal?:AbortSignal,choose:typeof select=select) {
-  const release=acquireInput();
-  try{
-    assertCanExecute();const original=await snapshot(input.snapshotId);requireFreshObservation(original.at);
-    if(!input.expectation.trim())throw new Error('Describe the visible outcome you expect.');
-    if(input.anchor){validateBox(input.anchor);if(input.action.kind==='drag')await validateVisualAnchors([{box:input.anchor,template:await fingerprint(original.path,input.anchor)}],original.path,(await config()).templateMaxError);}
-    const action={...input.action,box:input.action.box??resolveTarget(input.action,original.width,original.height).box,to:resolveDestination(input.action)};
-    const result=await performAction(original,{action,target:action.kind==='click'?(input.grounded?.target??action.label):undefined,grounded:input.grounded,regions:input.anchor?[input.anchor]:undefined},signal,{choose});
-    if(!result.performed)return {reason:result.reason,inputSent:false as const,snapshot:result.snapshot,instruction:'No input was sent. Inspect this returned current image and revise the action if needed; do not recapture merely because the previous observation changed.'};
-    await trace({event:'dispatch',mode:'OBSERVED_ACTION',action:result.action,snapshotId:result.snapshot.id,expectation:input.expectation});
-    await new Promise(r=>setTimeout(r,700));
-    const after=await capture(signal);
-    return {reason:(result.input as any)?.focusPreserved===false?'foreground_changed: stop input':'input_sent_outcome_unverified',inputSent:true as const,point:result.action?.box?{x:result.action.box.x+result.action.box.width/2,y:result.action.box.y+result.action.box.height/2}:undefined,instruction:'Input was sent. Inspect the returned image to assess the outcome; dispatch is not proof of success.',expectation:input.expectation,beforeSnapshotId:result.snapshot.id,snapshot:after};
-  }finally{release();}
-}
-export async function runSelect(name:string,maxSteps:number,signal?:AbortSignal,onUpdate?:(s:string)=>void,choose:typeof select=select) {
-  const release=acquireInput();
-  try {
-    assertCanExecute();
-    const c=await config(),t=await task(),set=await loadSet(name),start=Date.now();
-    signal=signal?AbortSignal.any([signal,AbortSignal.timeout(c.maxRunSeconds*1000)]):AbortSignal.timeout(c.maxRunSeconds*1000);
-    const steps=Math.min(Math.max(1,maxSteps),c.maxSteps);let last:Snapshot|undefined;
-    let previousClick:{id:string;fingerprint:string}|undefined;const grounded=new Map<string,GroundedClick>();
-    for(let step=0;step<steps;step++) {
-      signal?.throwIfAborted();assertCanExecute();
-      if(Date.now()-start>c.maxRunSeconds*1000)return {reason:'time_budget',steps:step,snapshot:last};
-      const s=await capture(signal);last=s;
-      const {valid,rejected}=await validateSet(set,s);
-      if(!valid.length){await trace({event:'escalate',reason:'no_valid_targets',set:name,snapshotId:s.id,rejected});return {reason:'THINK: no valid targets',rejected,snapshot:s};}
-      const actions:Candidate[]=[...valid,{id:'wait',label:'WAIT: 화면 전환이나 로딩이 끝날 때까지 대기',kind:'wait',intent:'observe'},
-        {id:'think',label:'THINK: 판단이 어렵거나 새 화면이므로 계획과 후보를 다시 만든다',kind:'think',intent:'observe'}];
-      onUpdate?.(`SELECT ${step+1}/${steps} · ${set.screen}`);
-      const state=`전체 목표: ${t.objective}\n작업 지침: ${t.instructions.join("; ")}\n이번 단계 목표: ${set.purpose??'현재 관측에서 전체 목표를 향해 다음 단계로 이동한다.'}\n현재 화면: ${set.screen}\n현재 화면과 후보 좌표는 첨부 이미지에 근거한다.\n후보는 현재 화면의 이미지 검사를 통과했다. 작업 적합성과 제약은 목표 및 지침에 따라 판단한다. 보이지 않는 대상은 추측하지 말고, 후보가 맞지 않으면 THINK를 고른다.`;
-      const waitingSince=Date.now();
-      const waiting=setInterval(()=>onUpdate?.(`SELECT · 모델 대기/추론 ${Math.round((Date.now()-waitingSince)/1000)}초 · 제한 ${c.ollamaTimeoutSeconds}초`),5000);
-      let decision;
-      try{decision=await choose(state,actions,signal,(await sharp(s.path).resize({width:1050,withoutEnlargement:true}).png().toBuffer()).toString('base64'));}finally{clearInterval(waiting);}
-      await trace({event:'decision',snapshotId:s.id,set:name,version:set.version,decision});
-      if(!decision.choice||decision.legalMass<c.selectMinMass||decision.margin<c.selectMinMargin)return {reason:'THINK: uncertain selection',decision,snapshot:s};
-      let action=actions.find(a=>a.id===decision.choice)!;
-      if(action.kind==='think')return {reason:'THINK selected',decision,snapshot:s};
-      // Selection may queue behind other Ollama clients. Always recapture before input.
-      const fresh=await capture(signal);last=fresh;
-      if(action.kind!=='wait') {
-        const current=await validateSet(set,fresh);
-        const resolved=current.valid.find(v=>v.id===action.id);
-        if(!resolved)return {reason:'THINK: stale target',snapshot:fresh};
-        action=resolved;
-        const now=await fingerprint(fresh.path,action.box!);
-        if(previousClick?.id===action.id&&difference(previousClick.fingerprint,now)<0.015)return {reason:'THINK: repeated click without target change',snapshot:fresh};
-        previousClick={id:action.id,fingerprint:now};
-      }
-      await guardRepeatedAction(action,fresh);
-      let input:any,dispatched=action,dispatchSnapshot=fresh;
-      if(action.kind==='wait')input=await execute(action,fresh,signal);
-      else {
-        const performed=await performAction(fresh,{action,target:action.kind==='click'?(action.target??action.label):undefined,grounded:grounded.get(action.id)},signal,{choose});
-        if(!performed.performed)return {reason:performed.reason,snapshot:performed.snapshot};
-        if(performed.grounded)grounded.set(action.id,performed.grounded);input=performed.input;dispatched=performed.action!;dispatchSnapshot=performed.snapshot;
-      }
-      await trace({event:'dispatch',action:dispatched,snapshotId:dispatchSnapshot.id});
-      if(input)await trace({event:'input_result',actionId:action.id,input});
-      onUpdate?.(`${action.label} · ${Math.round(decision.elapsedMs)} ms`);
-      // A screen transition returns control to THINK on the next fresh observation.
-      // A pressed control may remain visible before the destination appears.
-      // Let that transition settle before returning an image to the planner.
-      await new Promise(r=>setTimeout(r,1800));
-      const after=await capture(signal);last=after;
-      await trace({event:'after_action',actionId:action.id,snapshotId:after.id});
-      // A target app may activate a new window in response to an event. Stop
-      // dispatching if that happens; never wrestle focus back from the user.
-      if(input?.inputMode==='background'&&input.focusPreserved===false)return {reason:'THINK: foreground changed during background input',snapshot:after};
-      if(action.kind==='drag')return {reason:'observe_result',action:action.label,snapshot:after};
-    }
-    return {reason:'step_budget',snapshot:last};
-  }finally{release();}
+
+/** Legacy sets use the same bounded executor rather than a separate replay loop. */
+export async function runSelect(name:string,maxSteps:number,signal?:AbortSignal,onUpdate?:(s:string)=>void,choose:typeof select=select,work?:WorkContract){
+  const set=await loadSet(name),t=await task(),c=await config();
+  const goal=set.purpose??t.objective;
+  const actions:Flow['states'][number]['actions']=set.candidates.filter(a=>a.kind==='click'||a.kind==='drag').map(a=>({
+    id:a.id,kind:a.kind as 'click'|'drag',label:a.label,when:a.intent,target:a.target??a.label,box:a.box??whole,to:a.to,targetGuard:a.kind==='drag'?'region':'image',
+  }));
+  const flow:Flow={name:`set-${createHash('sha256').update(set.name).digest('hex').slice(0,16)}`,version:1,createdAt:Date.now(),purpose:goal,entry:'observed',states:[{
+    id:'observed',snapshotId:set.createdFrom,description:set.screen??goal,visualAnchors:(set.visualAnchors??[]).map(a=>a.box),anchors:set.visualAnchors,
+    progressRegion:whole,doneWhen:goal,actions,memoryMode:'scan',
+  }]};
+  const saved=await cacheFlow(flow);
+  const result=await runFlow(saved,work??{revision:`set-${set.version}`,requests:[goal,...t.instructions]},{maxActions:Math.min(Math.max(1,maxSteps),c.maxSteps),signal,onUpdate},{choose});
+  return {...result,steps:result.actions};
 }
