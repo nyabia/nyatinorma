@@ -12,7 +12,7 @@ import {crop,gridOverlay} from './vision.js';
 import {reservedExecutionIds,assertNoUnresolvedInput,loadContinuation,newContinuation,saveContinuation,type CandidateBatch,type Continuation,type ExecutionCandidate,type ExecutionInput,type ExecutionResult,type ExecutionStatus,type Evidence} from './execution-contract.js';
 import type {Snapshot,Candidate,Decision,Box} from './types.js';
 
-export type SupplierContext={goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';scope:string;snapshot:Snapshot;history:string[];signal:AbortSignal;remainingRebuilds:number;lastAction?:ExecutionCandidate;procedure?:CandidateBatch['procedure']};
+export type SupplierContext={dragOnly?:boolean;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';scope:string;snapshot:Snapshot;history:string[];signal:AbortSignal;remainingRebuilds:number;lastAction?:ExecutionCandidate;procedure?:CandidateBatch['procedure']};
 export type CandidateSupplier=(context:SupplierContext)=>Promise<CandidateBatch>;
 export type ExecutionOptions={signal?:AbortSignal;interrupted?:()=>boolean;onUpdate?:(s:string)=>void;refreshSupplier?:boolean;confirmDone?:number;transientRetries?:number;maxWaits?:number};
 export type ExecutionDeps=ActionDeps & {trace:typeof trace;sleep:typeof delay};
@@ -42,26 +42,44 @@ function statusFor(reason:string):ExecutionStatus{
   if(reason==='error')return 'error';
   return 'needs_decision';
 }
+function coarseScroll(a:ExecutionCandidate,j:Continuation){return a.kind==='drag'&&j.mode==='act'&&!j.procedure&&!a.preparedAction&&a.drag?.amount!=='small';}
 function inputLabel(a:ExecutionCandidate){return a.kind==='click'?a.target!:(a.drag?.surface??a.label);}
-function scopeOf(j:Continuation,work:WorkContract){return `User requests (later corrections take precedence):\n${work.requests.join('\n\n')}\nLocal goal: ${j.goal}\nVisible completion condition: ${j.until}\nConstraints: ${j.constraints.join('; ')}`;}
+function scopeOf(j:Continuation,work:WorkContract){return `User requests (later corrections take precedence):\n${work.requests.join('\n\n')}\nLocal goal: ${j.goal}\nVisible completion condition: ${j.until}\nCurrent local constraints: ${j.constraints.join('; ')}\nWithin the user's authorized scope, current constraints override conflicting steps in an older local goal or history. Do not repeat a now-forbidden action to satisfy obsolete wording.`;}
 async function frame(s:Snapshot){return (await sharp(s.path).resize({width:1050,withoutEnlargement:true}).png().toBuffer()).toString('base64');}
 
 /** One input/observation state machine shared by adaptive, saved, and passive suppliers. */
 export async function runExecution(input:ExecutionInput,supplier:CandidateSupplier,work:WorkContract,options:ExecutionOptions={},overrides:Partial<ExecutionDeps>={}):Promise<ExecutionResult>{
   const c=await config(),d={...actionDefaults,trace,sleep:delay,...overrides};
-  const maxActions=input.maxActions??20,maxRebuilds=input.maxRebuilds??6,maxSeconds=Math.min(input.maxSeconds??c.maxRunSeconds,c.maxRunSeconds);
-  if(!Number.isInteger(maxActions)||maxActions<1||maxActions>100||!Number.isInteger(maxRebuilds)||maxRebuilds<1||maxRebuilds>12||!Number.isFinite(maxSeconds)||maxSeconds<1)throw new Error('Invalid execution budget');
-  if(input.resume&&(input.goal||input.until||input.doneWhen))throw new Error('Goal and resume are mutually exclusive');
+  let maxActions=input.maxActions??(input.dragOnly?80:20);
+  const maxRebuilds=input.maxRebuilds??6,maxSeconds=Math.min(input.maxSeconds??c.maxRunSeconds,c.maxRunSeconds);
+  if(!Number.isInteger(maxActions)||maxActions<1||maxActions>300||!Number.isInteger(maxRebuilds)||maxRebuilds<1||maxRebuilds>12||!Number.isFinite(maxSeconds)||maxSeconds<1)throw new Error('Invalid execution budget');
+  if(input.until&&input.doneWhen&&input.until!==input.doneWhen)throw new Error('until and doneWhen disagree');
   if(!input.resume&&!input.goal?.trim())throw new Error('Execution requires a goal');
   const release=acquireInput();let j:Continuation;
   try{
     const active=await loadContinuation();
     if(active?.lastInput.outcome==='unresolved'&&active.lastInput.delivery!=='not_sent'&&active.id!==input.resume)await assertNoUnresolvedInput();
     if(!input.resume)await assertNoUnresolvedInput();
-    const selected=input.resume?await loadContinuation(input.resume):newContinuation({revision:work.revision,goal:input.goal!,until:input.until?.trim()||input.doneWhen?.trim()||input.goal!,constraints:input.constraints??[],mode:input.mode??'act'});
+    const selected=input.resume?await loadContinuation(input.resume):newContinuation({revision:work.revision,goal:input.goal!,until:input.until?.trim()||input.doneWhen?.trim()||input.goal!,constraints:input.constraints??[],mode:input.mode??'act',dragOnly:input.dragOnly});
     if(!selected)throw new Error('Unknown continuation');
+    if(input.resume&&input.dragOnly&&!selected.dragOnly)throw new Error('This continuation was not started as drag-only; resume it with ny_act.');
     j=selected;
-    if(input.resume&&work.revision!==j.revision){j.revision=work.revision;j.batch=undefined;j.history.push('User request revised; current goal and unresolved input require fresh visual review');}
+    if(j.dragOnly&&input.maxActions===undefined)maxActions=80;
+    if(!j.dragOnly&&maxActions>100)throw new Error('Non-scroll execution supports at most 100 actions per call.');
+    if(input.resume){
+      const previous={goal:j.goal,until:j.until,constraints:j.constraints};
+      const revised={goal:input.goal?.trim()??j.goal,until:input.until?.trim()??input.doneWhen?.trim()??input.goal?.trim()??j.until,constraints:input.constraints??j.constraints};
+      const changed=JSON.stringify(previous)!==JSON.stringify(revised),requestChanged=work.revision!==j.revision;
+      if(changed||requestChanged){
+        Object.assign(j,revised);j.revision=work.revision;
+        // Rebuild candidates under the new scope. Never discard a dispatched
+        // input's pending outcome or extend the saved deadline during amendment.
+        j.batch=undefined;j.procedure=undefined;
+        if(changed){j.evidence=[];j.scan=undefined;if(j.phase==='done')j.phase='select';}
+        j.history.push(changed?'Local scope amended on resume; current goal/constraints supersede previous local instructions. Pending input still requires verification.':'User request revised; current goal and unresolved input require fresh visual review');
+        await d.trace({event:'execution_scope_revised',continuationId:j.id,previous,current:revised,requestChanged});
+      }
+    }
     await saveContinuation(j);
   }catch(error){release();throw error;}
   const remaining=Math.max(1,Math.min(maxSeconds*1000,j.deadlineAt-Date.now())),timeout=AbortSignal.timeout(remaining),signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
@@ -113,10 +131,11 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
   };
   const confirmDone=async(until=j.until)=>{
     for(let i=0;i<(options.confirmDone??1);i++){
+      const previous=s,afterScroll=j.lastInput.kind==='drag'&&j.lastInput.outcome==='observed';
       await observe();
       const before=j.lastInput.outcome==='observed'&&j.lastInput.beforeSnapshotId?await import('./store.js').then(m=>m.snapshot(j.lastInput.beforeSnapshotId!)).catch(()=>undefined):undefined;
-      const image=(await gridOverlay(Buffer.from(await frame(s!),'base64'))).toString('base64');
-      const verdict=await chooseWithDetail(`${scopeOf(j,work)}\nCompletion check for: ${until}. Judge every required condition of the requested final state, not merely progress toward it. The image has a 4×4 reference grid: rows A/B are the upper half, C/D the lower half; columns 1/2 are the left half, 3/4 the right half. Check spatial conditions against these boundaries. Fully inside requires the entire target within the requested region; partial overlap is insufficient. Closing, dismissing, removing or leaving a target requires its ABSENCE, not its continued visibility. A successor screen mentioning similar words is not necessarily the original target. The full-window grid belongs to the CURRENT screen. Prior input information is history, not evidence that the goal is now satisfied. Last input: ${j.lastAction?.label??'none'}; expected effect (a hypothesis, not proof): ${j.lastInput.expectation??'none'}. A changed screen alone is insufficient, but do not require the removed target to remain visible.`,[{id:'yes',label:'YES: visual evidence satisfies the termination condition, including any required absence'},{id:'no',label:'NO: at least one required condition is unmet, even if progress occurred'},{id:'uncertain',label:'UNCERTAIN: image cannot establish the final state'}],image,j.batch?.progressRegion??j.lastAction?.drag?.view,before);
+      const image=afterScroll&&previous?await comparisonImage(previous,s!,[],j.lastAction?.drag?.region??j.batch?.progressRegion):(await gridOverlay(Buffer.from(await frame(s!),'base64'))).toString('base64');
+      const verdict=await chooseWithDetail(`${scopeOf(j,work)}\nCompletion check for: ${until}. Judge every required condition of the requested final state, not merely progress toward it. ${afterScroll?'Compare the prior post-drag view with the fresh CURRENT view. Confirm the target remains readable and sufficiently settled for the requested final state, rather than only passing through it during inertia. A presence-only search may finish when identity is clear and the item remains in view; precise alignment requires its position to be stable enough. Decorative animation need not stop. Judge spatial conditions within the current window, not the combined image.':'The image has a 4×4 reference grid: rows A/B are the upper half, C/D the lower half; columns 1/2 are the left half, 3/4 the right half. Check spatial conditions against these boundaries.'} Fully inside requires the entire target within the requested region; partial overlap is insufficient. Closing, dismissing, removing or leaving a target requires its ABSENCE, not its continued visibility. A successor screen mentioning similar words is not necessarily the original target. When present, the full-window grid belongs to the CURRENT screen. Prior input information is history, not evidence that the goal is now satisfied. Last input: ${j.lastAction?.label??'none'}; expected effect (a hypothesis, not proof): ${j.lastInput.expectation??'none'}. A changed screen alone is insufficient, but do not require the removed target to remain visible.`,[{id:'yes',label:'YES: visual evidence satisfies the termination condition, including any required absence'},{id:'no',label:'NO: at least one required condition is unmet, even if progress occurred'},{id:'uncertain',label:'UNCERTAIN: image cannot establish the final state'}],image,j.batch?.progressRegion??j.lastAction?.drag?.region??j.lastAction?.drag?.view,afterScroll?previous:before);
       if(!confident(verdict,c)||verdict.choice!=='yes')return false;
       evidence.push({claim:until,snapshotId:s!.id});
     }
@@ -134,7 +153,9 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
     if(!work.requests.length)return await finish('missing_user_request');
     if(Date.now()>=j.deadlineAt)return await finish('deadline_reached');
     await observe();
-    while(decisions++<100){
+    // Account for SELECT and post-input checks, not just dispatched gestures.
+    const decisionBudget=j.dragOnly?Math.max(100,maxActions*4+maxRebuilds*3):100;
+    while(decisions++<decisionBudget){
       check();if(Date.now()>=j.deadlineAt)return await finish('deadline_reached');
       const scope=scopeOf(j,work);
       // A prepared dispatch may have reached the OS before interruption. Resume
@@ -170,18 +191,22 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
         const a=j.lastAction;
         const image=await memory.scrollComparison(s!,old,latestSeen?.info.revisited?latestSeen.reference:undefined);
         const adaptive=j.mode==='act'&&!j.procedure&&!a.preparedAction;
-        const smaller=a.drag?.amount==='large'?'medium':'small';
-        const scrollPrompt=`${scope}\nUse the full CURRENT view for scene context, and the enlarged BEFORE/CURRENT scroll surface to read item identities. The EARLIER SEARCH VIEW, if present, helps recognize revisited content; similarity alone does not prove an endpoint. After a ${a.drag?.amount??'medium'} drag of ${a.drag?.surface} ${a.drag?.direction}. Compare the previous and current content. Classify the effect and the next scrolling decision. FOUND means no further scrolling is needed before checking completion or acting on the target. Merely seeing the target is not FOUND when its requested position still requires scrolling. Decorative motion alone is not list movement. If the target was visible before and is now lost, or another drag of the same length would overshoot its requested position, choose REVERSE if passed, SMALLER if approaching, or ADJUST if new candidates are needed instead of continuing the same route. Mere list motion is not proof of progress toward the goal.`;
+        const smaller=!j.dragOnly&&a.drag?.amount==='large'?'medium':'small';
+        const scrollPrompt=`${scope}\nUse the full CURRENT view for scene context, and the enlarged BEFORE/CURRENT scroll surface to read item identities. The EARLIER SEARCH VIEW, if present, helps recognize revisited content; similarity alone does not prove an endpoint. After a ${a.drag?.amount??'medium'} drag of ${a.drag?.surface} ${a.drag?.direction}. Compare the previous and current content. Classify the effect and the next scrolling decision. Do NOT wait solely because inertial scrolling or animation continues. If item identities, direction and the target search state are readable, MOVED/LARGER may continue coarse search on the same surface while content is moving. Choose STILL only when motion/loading prevents a reliable next decision, or the target needs to settle before a precise correction. Choose SMALLER/REVERSE only when the target position is clear enough to judge that correction. FOUND means no further scrolling is needed before checking completion or acting on the target. Merely seeing the target is not FOUND when its requested position still requires scrolling. Decorative motion alone is not list movement. If the target was visible before and is now lost, or another drag of the same length would overshoot its requested position, choose REVERSE if passed, SMALLER if approaching, or ADJUST if new candidates are needed instead of continuing the same route. Prefer LARGE for list searching in both scroll-only and mixed click/scroll goals. Keep LARGE while the target is absent or far away; repeated tiny drags are not the default safety strategy. SMALLER requires visible evidence that a target is near or needs fine alignment. If a SMALL or MEDIUM drag moved correctly but the target is still absent or clearly far away, prefer LARGER over MOVED to resume LARGE search. For scroll-only goals use exactly LARGE and SMALL. Do not increase distance when the target is near, passed, or unreadable. Mere list motion is not proof of progress toward the goal.`;
         const scrollChoices=[
-          {id:'found',label:'FOUND: stop scrolling; the target is ready for completion checking or the next non-drag action'},{id:'moved',label:'Content moved toward the goal; same direction and distance remain appropriate, with no sign of overshoot'},...(adaptive?[{id:'smaller',label:`Continue same direction with ${smaller} movement for fine alignment`},{id:'reverse',label:'The requested target was visible BEFORE and passed/lost NOW: reverse with a small drag to recover it'},{id:'retry',label:'Same gesture is still appropriate: no movement yet, but not an endpoint; retry once on this surface'}]:[]),{id:'adjust',label:'Need a different surface, view or action not represented by these choices'},{id:'boundary',label:'Visible evidence establishes a scroll boundary or search cycle; goal is still absent, report it without further scrolling'},{id:'still',label:'Movement or loading still in progress'},{id:'no_change',label:'No relevant movement'},{id:'other_screen',label:'Different screen or scope'},{id:'unclear',label:'Insufficient visual evidence'}];
+          {id:'found',label:'FOUND: stop scrolling; the target is ready for completion checking or the next non-drag action'},{id:'moved',label:'Current distance remains appropriate: continue LARGE search, or finish a visibly nearby fine adjustment; if short drags leave the target absent/far, prefer LARGER'},...(adaptive?[{id:'smaller',label:`Target is visibly close to the requested position: use ${smaller} for fine alignment, not routine searching`},...(a.drag&&a.drag.amount!=='large'?[{id:'larger',label:'Target remains absent or far away, movement is in the correct direction with no overshoot: return to a large search drag'}]:[]),{id:'reverse',label:'The requested target was visible BEFORE and passed/lost NOW: reverse with a small drag to recover it'},{id:'retry',label:'Same gesture is still appropriate: no movement yet, but not an endpoint; retry once on this surface'}]:[]),{id:'adjust',label:'Need a different surface, view or action not represented by these choices'},{id:'boundary',label:'Visible evidence establishes a scroll boundary or search cycle; goal is still absent, report it without further scrolling'},{id:'still',label:'WAIT: motion/loading prevents reliable reading or precise target adjustment; movement alone is not a reason to wait'},{id:'no_change',label:'No relevant movement'},{id:'other_screen',label:'Different screen or scope'},{id:'unclear',label:'Insufficient visual evidence'}];
         const v=await chooseWithDetail(scrollPrompt,scrollChoices,image,a.drag?.region??a.drag?.view??j.batch?.progressRegion,old);
         await d.trace({event:'scroll_decision',continuationId:j.id,snapshotId:s!.id,beforeSnapshotId:old?.id,region,decision:v});
         if(!confident(v,c))return await finish('uncertain_selection',{summary:`Could not determine whether ${a.drag?.surface??a.label} moved or the target appeared after inspecting an enlarged current view.`});
-        if(v.choice==='still'){if(++j.waits>(options.maxWaits??40))return await finish('wait_budget');await d.sleep(1000,signal);await observe();continue;}
+        if(v.choice==='still'){
+          if(++j.waits>(options.maxWaits??40))return await finish('wait_budget');
+          // SELECT already takes time; short rechecks suffice for readable search.
+          await d.sleep(coarseScroll(a,j)?Math.min(250*j.waits,1000):700,signal);await observe();continue;
+        }
         j.lastInput={...j.lastInput,outcome:'observed',afterSnapshotId:s!.id};j.phase='select';j.waits=0;
-        if(adaptive&&['smaller','reverse','retry'].includes(v.choice!)&&a.drag){
+        if(adaptive&&['smaller','larger','reverse','retry'].includes(v.choice!)&&a.drag){
           const opposite={up:'down',down:'up',left:'right',right:'left'} as const;
-          const next:ExecutionCandidate={...a,drag:{...a.drag,direction:v.choice==='reverse'?opposite[a.drag.direction]:a.drag.direction,amount:v.choice==='reverse'?'small':v.choice==='smaller'?smaller:a.drag.amount}};
+          const next:ExecutionCandidate={...a,drag:{...a.drag,direction:v.choice==='reverse'?opposite[a.drag.direction]:a.drag.direction,amount:v.choice==='reverse'?'small':v.choice==='smaller'?smaller:v.choice==='larger'?'large':a.drag.amount}};
           j.history.push(`Visual SELECT chose ${v.choice}: ${next.drag!.amount??'medium'} ${next.drag!.direction} on the same surface.`);
           j.batch={...(j.batch??{description:'Continue visual search',actions:[]}),actions:[next]};
           repeatAction=next;await persist();continue;
@@ -213,8 +238,8 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
         const generated=j.mode==='act'&&!j.procedure;
         if(generated&&callRebuilds>=maxRebuilds)return await finish('candidate_budget');
         options.onUpdate?.(`Candidate selection ${callRebuilds+1}/${maxRebuilds}`);
-        const supplied=await supplier({goal:j.goal,until:j.until,constraints:j.constraints,mode:j.mode,scope,snapshot:s!,history:j.history.slice(-8),signal,remainingRebuilds:maxRebuilds-callRebuilds,lastAction:j.lastAction,procedure:j.procedure});check();
-        const next=j.mode==='wait'?{...supplied,actions:[]}:supplied;validateBatch(next);
+        const supplied=await supplier({dragOnly:j.dragOnly,goal:j.goal,until:j.until,constraints:j.constraints,mode:j.mode,scope,snapshot:s!,history:j.history.slice(-8),signal,remainingRebuilds:maxRebuilds-callRebuilds,lastAction:j.lastAction,procedure:j.procedure});check();
+        const next=j.mode==='wait'?{...supplied,actions:[]}:j.dragOnly?{...supplied,actions:supplied.actions.filter(a=>a.kind==='drag')}:supplied;validateBatch(next);
         if(generated){const used=Math.max(1,next.generationAttempts??1);j.rebuilds+=used;callRebuilds+=used;await persist();}
         if(next.stopReason)return await finish(next.stopReason);
         j.batch=next;j.procedure=next.procedure;await persist();
@@ -222,7 +247,9 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
         // a fresh one, and the action runtime checks again before dispatch.
         await observe();
       }
-      const batch=j.batch!;const until=j.mode==='flow'?(batch.until??j.until):j.until;
+      const batch=j.batch!;
+      if(j.dragOnly)batch.actions=batch.actions.filter(a=>a.kind==='drag').map(a=>a.drag?{...a,drag:{...a.drag,amount:a.drag.amount==='small'?'small':'large'}}:a);
+      const until=j.mode==='flow'?(batch.until??j.until):j.until;
       if(batch.progressRegion&&JSON.stringify(batch.progressRegion)!==JSON.stringify(region)){
         region=batch.progressRegion;memory=new VisualMemory(region,40);latestSeen=await memory.observe(s!);memoryInfo=latestSeen.info;j.scan={region,data:memory.serialize()};await persist();
       }
@@ -247,6 +274,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       if(j.mode==='wait')return await finish('invalid_choice');
       const a=batch.actions.find(x=>x.id===v.choice);if(!a)return await finish('invalid_choice');
       repeatAction=undefined;
+      if(j.dragOnly&&a.kind!=='drag')return await finish('drag_only_scope');
       if(a.kind==='drag'){
         const surfaceRegion=a.drag?.region??a.drag?.view??batch.progressRegion??whole;
         if(JSON.stringify(surfaceRegion)!==JSON.stringify(region)){
@@ -278,7 +306,8 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       await persist();
       await d.trace({event:'dispatch',mode:j.mode,snapshotId:s.id,action:performed.action,continuationId:j.id});
       if((performed.input as any)?.focusPreserved===false)return await finish('foreground_changed');
-      await d.sleep(700,signal);await observe();
+      // Read coarse scrolling promptly; alignment/clicks keep a settling interval.
+      await d.sleep(coarseScroll(a,j)?200:700,signal);await observe();
     }
     return await finish('decision_budget');
   }catch(error){

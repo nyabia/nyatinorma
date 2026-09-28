@@ -13,9 +13,10 @@ export function activeRunPath(){return runPath(requireRun().id);}
 export async function loadRun(id:string):Promise<Run>{return JSON.parse(await readFile(resolve(runPath(id),'run.json'),'utf8'));}
 export async function listRuns(){await initialize();await mkdir(resolve(dataDir,'runs'),{recursive:true});const names=await readdir(resolve(dataDir,'runs'));const rows=await Promise.all(names.map(async id=>{try{return await loadRun(id);}catch(e:any){if(e.code==='ENOENT')return null;throw e;}}));return rows.filter((r):r is Run=>Boolean(r)).sort((a,b)=>b.updatedAt-a.updatedAt);}
 async function copyIfExists(from:string,to:string){try{await cp(from,to,{recursive:true,errorOnExist:false,force:false});}catch(e:any){if(e.code!=='ENOENT')throw e;}}
-export async function createRun(presetId?:string,title?:string){
+export async function createRun(presetId?:string,title?:string,stopAt?:string|null){
+  if(stopAt)parseStopAt(stopAt);
   const preset=presetId?await task(presetId):{id:'scratch',name:'자유 작업',objective:'현재 사용자가 요청한 범위만 수행한다. 아직 요청이 없으면 대화만 한다.',instructions:[],successCriteria:[],revision:1,updatedAt:Date.now()},now=Date.now(),id=`run-${now}-${randomUUID().slice(0,8)}`;
-  const run:Run={id,title:title?.trim()||`${presetId?preset.name:'임시 기록'} · ${new Date(now).toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})}`,preset,status:'ready',createdAt:now,updatedAt:now,anonymous:!presetId&&!title?.trim(),scenario:presetId,knowledgeApp:await appSkillId()};
+  const run:Run={id,title:title?.trim()||`${presetId?preset.name:'임시 기록'} · ${new Date(now).toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})}`,preset,status:'ready',createdAt:now,updatedAt:now,anonymous:!presetId&&!title?.trim(),scenario:presetId,knowledgeApp:await appSkillId(),...(stopAt?{stopAt}:{})};
   await mkdir(runPath(id),{recursive:true});
   if(presetId)await copyIfExists(await libraryDirectory(preset.id),resolve(runPath(id),'sets'));
   await saveJSON(resolve(runPath(id),'run.json'),run);return run;
@@ -37,7 +38,7 @@ async function release(){if(held){await unlink(resolve(runPath(held),'owner.json
 export async function selectRun(id:string|null){
   if(id===currentRun()?.id)return currentRun();
   const run=id?await loadRun(id):null;
-  if(run?.knowledgeApp&&run.knowledgeApp!==await appSkillId())throw new Error('이 기록은 다른 앱의 기록입니다. 대상 앱 설정을 확인하세요.');
+  if(run?.knowledgeApp&&run.knowledgeApp!==await appSkillId())throw new Error('이 기록은 다른 앱의 기록입니다. ny_target으로 해당 앱을 선택한 뒤 이 기록을 다시 연결하세요.');
   if(run){
     const lock=resolve(runPath(run.id),'owner.json');
     try{await writeFile(lock,JSON.stringify({pid:process.pid}),{flag:'wx'});}

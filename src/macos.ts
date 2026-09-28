@@ -8,6 +8,7 @@ import {config,dataDir,root,saveJSON} from './config.js';
 import type {Snapshot,Candidate} from './types.js';
 import {normalizeCapture} from './vision.js';
 import {assertCanExecute} from './execution-state.js';
+import {currentTarget} from './app-target.js';
 const exec = promisify(execFile);
 // Native iPad app background input: NSEvent factory, per-window location,
 // and Command modifier preserve the user's foreground app and desktop cursor.
@@ -15,11 +16,18 @@ export const backgroundEventOptions={backgroundTransport:'public',eventFactory:'
 let started=false;
 export async function native(params:Record<string,unknown>,signal?:AbortSignal):Promise<any> {
   const c=await config();
+  const target=currentTarget();
+  if(params.action==='list_windows'||(target&&!target.bundleId&&['window','capture','click','drag'].includes(String(params.action)))){
+    const doctor=await native({action:'doctor'},signal);
+    if(!doctor.capabilities?.appTargetSelection)throw new Error('이 앱 선택에는 Nyatinorma Bridge protocol 5가 필요합니다. 실행 중인 작업을 마친 뒤 npm run build:native로 빌드하고 브리지를 재시작하세요.');
+  }
   const dir=resolve(dataDir,'ipc');await mkdir(dir,{recursive:true,mode:0o700});
   if(!started){await exec('/usr/bin/open',['-g',resolve(root,'Nyatinorma Bridge.app')]);started=true;}
   const id=`${Date.now()}-${randomUUID()}`;const request=resolve(dir,id+'.request.json'),response=resolve(dir,id+'.response.json');
   const deadline=Date.now()+c.desktopTimeoutSeconds*1000;
-  await writeFile(request+'.tmp',JSON.stringify({bundleId:c.bundleId,...params,expiresAt:deadline}),{mode:0o600});await rename(request+'.tmp',request);
+  // Never inherit the configured app's bundle when another app was selected.
+  const binding=target?{bundleId:target.bundleId??'',targetPid:target.pid,windowId:target.windowId}:{};
+  await writeFile(request+'.tmp',JSON.stringify({bundleId:c.bundleId,...binding,...params,expiresAt:deadline}),{mode:0o600});await rename(request+'.tmp',request);
   try {
     while(Date.now()<deadline){
       signal?.throwIfAborted();

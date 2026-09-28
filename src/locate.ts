@@ -30,6 +30,14 @@ export function movePoint(s:Pick<Snapshot,'width'|'height'>,view:Box,point:Point
 }
 const samePoint=(a:Point,b:Point)=>Math.abs(a.x-b.x)<1e-12&&Math.abs(a.y-b.y)<1e-12;
 
+/** Keep the candidate fixed while exposing native-pixel button edges. This is
+ * a display scale, not a hitbox or a geometric substitute for visual judgment. */
+function clickDetailView(s:Pick<Snapshot,'width'|'height'>,view:Box,point:Point):Box{
+  const width=Math.min(view.width,160/s.width),height=Math.min(view.height,160/s.height);
+  return {x:Math.max(view.x,Math.min(view.x+view.width-width,point.x-width/2)),
+    y:Math.max(view.y,Math.min(view.y+view.height-height,point.y-height/2)),width,height};
+}
+
 export async function locateImage(s:Snapshot,frame:Pick<Frame,'view'|'point'>,grid=true,moves:Point[]=[]){
   const {view,point}=frame,w=s.width,h=s.height;
   const left=Math.floor(view.x*w),top=Math.floor(view.y*h),width=Math.max(1,Math.min(w-left,Math.round(view.width*w))),height=Math.max(1,Math.min(h-top,Math.round(view.height*h)));
@@ -79,8 +87,10 @@ export async function locate(s:Snapshot,input:LocateInput,deps:LocateDeps){
        ...(canBack?[{id:'back',label:'ZOOM OUT: target/context lost; inspect another region from the parent view'}]:[]),
        {id:'think',label:'THINK: target absent or ambiguous; no viable visual search remains'}];
     const objective=frame.history.length?'Continue locating the original target under the same local constraints.':`Locate a ${dragStart?'drag start':'point'} only; no input has been sent. Target: ${input.target}\nLocal constraints: ${input.constraints??'None beyond the target.'}\nUse the fixed screenshot, never invent hidden content. This is visual grounding, not task planning. The pink crosshair is an annotation, not app UI.`;
-    const question=phase==='verify'?(dragStart?'Judge ONLY the existing pink crosshair. It must lie on the intended surface at a safe start point for the proposed drag, not on a blocking control. Do not assume it must be clickable. Answer YES, NO or UNCERTAIN using its option letter.':'Judge ONLY the existing pink crosshair. Any point safely inside the intended clickable target area is acceptable; it need not be the exact centre. If the target description or user context explicitly establishes a tap-anywhere input surface, any unobstructed point on that surface is valid: do not require a rendered button or aim for its instructional caption. For such broad surfaces, prefer blank backing areas and reject points on embedded cards, item icons, or child controls that may intercept taps. Otherwise, do not assume arbitrary background is clickable. Do not choose between alternative locations. Answer YES, NO or UNCERTAIN using its option letter.'):phase==='move'?'Adjust only the proposed crosshair, never the real pointer. Cyan points A–H show the eight possible moves relative to the pink crosshair. Choose a point toward the target, halve the move distance for finer adjustments, or return to grid search/zoom out. Every moved point must pass a separate YES/NO/UNCERTAIN check.':'The current candidate was not confirmed. The image has a 3x3 grid labelled A–I. Pick a cell containing a suitable point of the target. Multiple cells may be valid: choose any untried suitable one. This only zooms and never clicks. Already explored cells: '+[...frame.tried].map(i=>String.fromCharCode(65+i)).join(', ')+'.';
-    const hasContext=dragStart&&(frame.view.width<1||frame.view.height<1);
+    const question=phase==='verify'?(dragStart?'Judge ONLY the existing pink crosshair. It must lie on the intended surface at a safe start point for the proposed drag, not on a blocking control. Do not assume it must be clickable. Answer YES, NO or UNCERTAIN using its option letter.':'Judge ONLY the existing pink crosshair. Any point safely inside the intended clickable target body is acceptable; it need not be the exact centre. For a bounded button, icon or toggle, require clear interior clearance from its edge. An associated text caption or OFF/ON label outside the control does not prove that location is clickable. Reject points on the rim, outside the visible body, or between neighbouring controls; use MOVE or zoom to correct them instead of approving a nearby point. If the target description or user context explicitly establishes a tap-anywhere input surface, any unobstructed point on that surface is valid: do not require a rendered button or aim for its instructional caption. For such broad surfaces, prefer blank backing areas and reject points on embedded cards, item icons, or child controls that may intercept taps. Otherwise, do not assume arbitrary background is clickable. Do not choose between alternative locations. Answer YES, NO or UNCERTAIN using its option letter.'):phase==='move'?'Adjust only the proposed crosshair, never the real pointer. Cyan points A–H show the eight possible moves relative to the pink crosshair. Choose a point toward the target, halve the move distance for finer adjustments, or return to grid search/zoom out. Every moved point must pass a separate YES/NO/UNCERTAIN check.':'The current candidate was not confirmed. The image has a 3x3 grid labelled A–I. Pick a cell containing a suitable point of the target. Multiple cells may be valid: choose any untried suitable one. This only zooms and never clicks. Already explored cells: '+[...frame.tried].map(i=>String.fromCharCode(65+i)).join(', ')+'.';
+    // A tiny crop can make a caption look like the control itself. Show the
+    // same proposed point in the full app for click identity as well as drags.
+    const hasContext=frame.view.width<1||frame.view.height<1;
     const state=`${objective}\n${question}${dragStart?' A scrollable surface includes its ordinary cards, rows, and items: an item being clickable alone does not make it an unsuitable drag start. Exclude separate fixed controls and overlays.':''}${hasContext?' The LEFT image shows full-window context with the same pink point; the RIGHT image is the enlarged search view. Grid and move labels refer only to the RIGHT image.':''}\nFull-window crop: ${JSON.stringify(frame.view)}; candidate: ${JSON.stringify(frame.point)}; depth=${frames.length-1}.`;
     let image=await locateImage(s,frame,phase==='search',phase==='move'?moves:[]);
     if(hasContext){
@@ -97,7 +107,18 @@ export async function locate(s:Snapshot,input:LocateInput,deps:LocateDeps){
     if(phase==='verify'){
       if(!decision.choice||decision.truncated)return finish('uncertain_selection',frame);
       if(!['yes','no','uncertain'].includes(decision.choice))return finish('invalid_choice',frame);
-      if(decision.choice==='yes'&&Number.isFinite(decision.margin)&&decision.margin>=deps.minMargin)return finish('located',frame,true);
+      if(decision.choice==='yes'&&Number.isFinite(decision.margin)&&decision.margin>=deps.minMargin){
+        const detail=clickDetailView(s,frame.view,frame.point);
+        if(!dragStart&&(detail.width<frame.view.width||detail.height<frame.view.height)){
+          // Coarse YES proposes a point; it does not establish that a small
+          // control contains it. Confirm the SAME point with full context plus
+          // a close-up. A fresh branch avoids priming this check with YES.
+          // A rejected point stays in the normal zoom/MOVE recovery loop.
+          selection.reason='detail_confirmation_required';
+          frames.push(makeFrame(detail,frame.point,[]));continue;
+        }
+        return finish('located',frame,true);
+      }
       if(decision.choice==='yes')selection.reason='low_confirmation_margin';
       frame.phase=frame.adjusting||!canZoom?'move':'search';continue;
     }

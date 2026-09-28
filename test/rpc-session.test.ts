@@ -21,7 +21,7 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     const commands=await request('get_commands');assert.ok(commands.commands.some((c:any)=>c.name==='preset'));
     await say('안녕. 게임은 조작하지 마.');assert.equal(state().run.anonymous,true);const anonymous=state().run.id;
     assert.equal(state().run.preset.id,'scratch');assert.deepEqual(state().knowledge.availableScenarios,[]);assert.equal(state().knowledge.scenario,null);
-    assert.deepEqual(payloads.at(-1).tools.map((tool:any)=>tool.function?.name).filter((name:string)=>name?.startsWith('ny_')).sort(),['ny_act','ny_block','ny_knowledge','ny_observe','ny_recall','ny_time','ny_tools','ny_wait']);
+    assert.deepEqual(payloads.at(-1).tools.map((tool:any)=>tool.function?.name).filter((name:string)=>name?.startsWith('ny_')).sort(),['ny_act','ny_block','ny_knowledge','ny_observe','ny_recall','ny_scroll','ny_target','ny_time','ny_tools','ny_wait']);
     const act=payloads.at(-1).tools.find((tool:any)=>tool.function?.name==='ny_act').function;
     assert.ok(act.parameters.properties.goal);assert.ok(act.parameters.properties.resume);assert.ok(act.parameters.properties.until);assert.equal(act.parameters.properties.point,undefined);
     assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));

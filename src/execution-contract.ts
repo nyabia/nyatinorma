@@ -8,16 +8,16 @@ import {currentRun} from './runtime.js';
 import {parseStopAt} from './time.js';
 import type {Box,Candidate,Point,Snapshot} from './types.js';
 
-export const reservedExecutionIds=new Set(['done','wait','rebuild','stop','found','moved','adjust','still','no_change','other_screen','unclear','smaller','reverse','retry','boundary']);
+export const reservedExecutionIds=new Set(['done','wait','rebuild','stop','found','moved','adjust','still','no_change','other_screen','unclear','smaller','larger','reverse','retry','boundary']);
 
 export type ExecutionStatus='done'|'yielded'|'needs_decision'|'stopped'|'error';
 export type InputState={delivery:'not_sent'|'sent'|'unknown';outcome:'not_applicable'|'unresolved'|'observed';actionId?:string;kind?:'click'|'drag';expectation?:string;beforeSnapshotId?:string;afterSnapshotId?:string;point?:Point;to?:Point;at?:number};
 export type Evidence={claim:string;snapshotId:string};
 export type ExecutionCandidate={id:string;kind:'click'|'drag';label:string;when:string;expectation:string;target?:string;drag?:{surface:string;direction:'up'|'down'|'left'|'right';amount?:'small'|'medium'|'large';view?:Box;region?:Box};next?:string[];preparedAction?:Candidate;grounded?:{target:string;source:Snapshot;box:Box}};
 export type CandidateBatch={description:string;actions:ExecutionCandidate[];until?:string;progressRegion?:Box;procedure?:{name:string;version:number;state?:string};stopReason?:string;generationAttempts?:number};
-export type ExecutionInput={goal?:string;until?:string;doneWhen?:string;resume?:string;constraints?:string[];maxActions?:number;maxSeconds?:number;maxRebuilds?:number;mode?:'act'|'flow'|'wait'};
+export type ExecutionInput={dragOnly?:boolean;goal?:string;until?:string;doneWhen?:string;resume?:string;constraints?:string[];maxActions?:number;maxSeconds?:number;maxRebuilds?:number;mode?:'act'|'flow'|'wait'};
 export type ExecutionResult={reason:string;status:ExecutionStatus;summary:string;goal:string;actions:number;rebuilds:number;selectCalls:number;elapsedMs:number;history:string[];visualMemory?:unknown;pendingOutcome?:string;snapshot?:Snapshot;evidence:Evidence[];lastInput:InputState;procedure?:CandidateBatch['procedure'];continuationId?:string;nextCall?:{resume:string};question?:string;error?:string;[key:string]:unknown};
-export type Continuation={schemaVersion:1;id:string;runId?:string;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';createdAt:number;deadlineAt:number;updatedAt:number;phase:'select'|'after_drag'|'after_click'|'unknown'|'done'|'stopped';procedure?:CandidateBatch['procedure'];batch?:CandidateBatch;lastInput:InputState;history:string[];actions:number;rebuilds:number;selectCalls:number;waits:number;scan?:unknown;evidence?:Evidence[];lastSnapshotId?:string;lastAction?:ExecutionCandidate;lastStatus?:ExecutionStatus};
+export type Continuation={schemaVersion:1;dragOnly?:boolean;id:string;runId?:string;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';createdAt:number;deadlineAt:number;updatedAt:number;phase:'select'|'after_drag'|'after_click'|'unknown'|'done'|'stopped';procedure?:CandidateBatch['procedure'];batch?:CandidateBatch;lastInput:InputState;history:string[];actions:number;rebuilds:number;selectCalls:number;waits:number;scan?:unknown;evidence?:Evidence[];lastSnapshotId?:string;lastAction?:ExecutionCandidate;lastStatus?:ExecutionStatus};
 
 function journalPath(){return currentRun()?resolve(activeRunPath(),'execution-continuation.json'):undefined;}
 function archivePath(id:string){
@@ -25,8 +25,8 @@ function archivePath(id:string){
   return resolve(activeRunPath(),'executions',id+'.json');
 }
 const ephemeral=new Map<string,Continuation>();
-export function newContinuation(input:{revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait'}):Continuation{
-  const now=Date.now(),stopAt=currentRun()?.stopAt;return {schemaVersion:1,id:randomUUID(),runId:currentRun()?.id,revision:input.revision,goal:input.goal,until:input.until,constraints:input.constraints,mode:input.mode,createdAt:now,deadlineAt:stopAt?parseStopAt(stopAt):Number.MAX_SAFE_INTEGER,updatedAt:now,phase:'select',lastInput:{delivery:'not_sent',outcome:'not_applicable'},history:[],actions:0,rebuilds:0,selectCalls:0,waits:0};
+export function newContinuation(input:{dragOnly?:boolean;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait'}):Continuation{
+  const now=Date.now(),stopAt=currentRun()?.stopAt;return {schemaVersion:1,id:randomUUID(),runId:currentRun()?.id,revision:input.revision,goal:input.goal,until:input.until,constraints:input.constraints,mode:input.mode,...(input.dragOnly?{dragOnly:true}:{}),createdAt:now,deadlineAt:stopAt?parseStopAt(stopAt):Number.MAX_SAFE_INTEGER,updatedAt:now,phase:'select',lastInput:{delivery:'not_sent',outcome:'not_applicable'},history:[],actions:0,rebuilds:0,selectCalls:0,waits:0};
 }
 export async function loadContinuation(id?:string):Promise<Continuation|undefined>{
   const path=journalPath();let value:Continuation|undefined;

@@ -3,11 +3,12 @@ import {mkdir,readFile,readdir,writeFile,cp} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {config,dataDir,root,saveJSON} from './config.js';
+import {currentTarget,configuredKnowledgeId} from './app-target.js';
 
 export type KnowledgeScope='general'|'app'|'scenario';
 export type Lesson={id:string;scope:KnowledgeScope;scenario?:string;title:string;content:string;status:'observed'|'hypothesis';evidence?:string;supersedes?:string;createdAt:number;runId?:string};
 function id(value:string){if(!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value))throw new Error('Invalid knowledge ID');return value;}
-export async function appSkillId(){const c=await config();return id(c.knowledgeAppId??((c.bundleId||c.targetApp).toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,63)||'workspace'));}
+export async function appSkillId(){return id(currentTarget()?.knowledgeAppId??configuredKnowledgeId(await config()));}
 export function skillPath(name:string){return resolve(dataDir,'skills',id(name));}
 async function seed(name:string){
   const path=skillPath(name);for(const dir of ['notes','evidence','presets','sets'])await mkdir(resolve(path,dir),{recursive:true});
@@ -15,12 +16,36 @@ async function seed(name:string){
   try{await writeFile(resolve(path,'SKILL.md'),text,{flag:'wx'});}catch(e:any){if(e.code!=='EEXIST')throw e;}
   return path;
 }
-let initialized:Promise<string>|undefined;
-export async function initializeSkills(){return initialized??=(async()=>{const app=await appSkillId();await seed('computer-use');const path=await seed(app);await copyIfExists(resolve(dataDir,'sets'),resolve(path,'sets'));return path;})().catch(e=>{initialized=undefined;throw e;});}
+const initialized=new Map<string,Promise<string>>();
+export async function initializeSkills(){
+  const app=await appSkillId();
+  if(!initialized.has(app))initialized.set(app,(async()=>{
+    await seed('computer-use');const path=await seed(app);
+    if(app===configuredKnowledgeId(await config()))await copyIfExists(resolve(dataDir,'sets'),resolve(path,'sets'));
+    return path;
+  })().catch(e=>{initialized.delete(app);throw e;}));
+  return initialized.get(app)!;
+}
 async function copyIfExists(from:string,to:string){try{await cp(from,to,{recursive:true,force:false,errorOnExist:false});}catch(e:any){if(e.code!=='ENOENT')throw e;}}
-let presets:Promise<string>|undefined;const libraries=new Map<string,Promise<string>>();
-export async function presetDirectory(){return presets??=(async()=>{const path=resolve(await initializeSkills(),'presets');await copyIfExists(resolve(dataDir,'tasks'),path);return path;})().catch(e=>{presets=undefined;throw e;});}
-export async function libraryDirectory(presetId:string){id(presetId);if(!libraries.has(presetId))libraries.set(presetId,(async()=>{const path=resolve(await initializeSkills(),'sets',presetId);await mkdir(path,{recursive:true});await copyIfExists(resolve(dataDir,'sets',presetId),path);return path;})().catch(e=>{libraries.delete(presetId);throw e;}));return libraries.get(presetId)!;}
+const presets=new Map<string,Promise<string>>(),libraries=new Map<string,Promise<string>>();
+export async function presetDirectory(){
+  const app=await appSkillId();
+  if(!presets.has(app))presets.set(app,(async()=>{
+    const path=resolve(await initializeSkills(),'presets');
+    if(app===configuredKnowledgeId(await config()))await copyIfExists(resolve(dataDir,'tasks'),path);
+    return path;
+  })().catch(e=>{presets.delete(app);throw e;}));
+  return presets.get(app)!;
+}
+export async function libraryDirectory(presetId:string){
+  id(presetId);const app=await appSkillId(),key=`${app}/${presetId}`;
+  if(!libraries.has(key))libraries.set(key,(async()=>{
+    const path=resolve(await initializeSkills(),'sets',presetId);await mkdir(path,{recursive:true});
+    if(app===configuredKnowledgeId(await config()))await copyIfExists(resolve(dataDir,'sets',presetId),path);
+    return path;
+  })().catch(e=>{libraries.delete(key);throw e;}));
+  return libraries.get(key)!;
+}
 export async function preserveEvidence(snapshotId:string,scope:KnowledgeScope='app'){
   if(!/^[0-9]+-[a-f0-9]{8}$/.test(snapshotId))throw new Error('Invalid evidence snapshot ID');
   await initializeSkills();const dir=skillPath(scope==='general'?'computer-use':await appSkillId());

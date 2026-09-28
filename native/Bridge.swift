@@ -119,19 +119,28 @@ final class PointerView:NSView {
         }
         if action == "doctor" || action == "permissions" || action == "diagnostics" {
             return ["ok":true,"screenRecording":CGPreflightScreenCaptureAccess(),"accessibility":AXIsProcessTrusted(),
-                    "protocolVersion":4,"capabilities":["backgroundInput":WindowEventAPI.shared.available,"windowRoutedInput":WindowEventAPI.shared.available,"agentPointer":true,"visionOnlyCapture":true],"interaction":interactionState(),
+                    "protocolVersion":5,"capabilities":["backgroundInput":WindowEventAPI.shared.available,"windowRoutedInput":WindowEventAPI.shared.available,"agentPointer":true,"visionOnlyCapture":true,"appTargetSelection":true],"interaction":interactionState(),
                     "bridgePath":Bundle.main.bundleURL.path,"bridgePid":ProcessInfo.processInfo.processIdentifier,
                     "apps":NSRunningApplication.runningApplications(withBundleIdentifier:bundle).map { ["pid":$0.processIdentifier,"name":$0.localizedName ?? "","path":$0.bundleURL?.path ?? ""] }]
         }
-        guard !bundle.isEmpty else { throw Failure("A target bundleId is required.") }
         guard CGPreflightScreenCaptureAccess() else { throw Failure("Screen Recording permission is required for the host application. Enable it in System Settings and restart the host.") }
         let content = try await SCShareableContent.excludingDesktopWindows(true,onScreenWindowsOnly:true)
-        let windows = content.windows.filter { $0.owningApplication?.bundleIdentifier == bundle && $0.frame.width > 300 && $0.frame.height > 200 && $0.windowLayer == 0 }
+        let visible = content.windows.filter { $0.frame.width > 0 && $0.frame.height > 40 && $0.windowLayer == 0 }
+        if action == "list_windows" {
+            return ["ok":true,"windows":visible.map { w -> [String:Any] in
+                ["window_id":w.windowID,"pid":w.owningApplication?.processID ?? 0,"app_name":w.owningApplication?.applicationName ?? "","bundle_id":w.owningApplication?.bundleIdentifier ?? "","title":w.title ?? "","bounds":rect(w.frame),"is_on_screen":true]
+            }]
+        }
+        let targetPid = p["targetPid"] as? Int32
+        guard !bundle.isEmpty || (targetPid != nil && p["windowId"] != nil) else { throw Failure("Select a target app window first.") }
+        let windows = visible.filter { w in
+            (bundle.isEmpty || w.owningApplication?.bundleIdentifier == bundle) && (targetPid == nil || w.owningApplication?.processID == targetPid)
+        }
         let selected: SCWindow?
         if let id = p["windowId"] as? UInt32 { selected = windows.first { $0.windowID == id } }
         else if windows.count == 1 { selected = windows[0] }
-        else { throw Failure("Expected exactly one game window; found \(windows.count). Specify windowId.") }
-        guard let window = selected else { throw Failure("Game window is not available") }
+        else { throw Failure("Expected exactly one app window; found \(windows.count). Specify windowId.") }
+        guard let window = selected else { throw Failure("Target window is not available") }
         let frame = window.frame
         let meta:[String:Any] = ["windowId":window.windowID,"frame":rect(frame),"title":window.title ?? "","pid":window.owningApplication?.processID ?? 0]
         if action == "window" { return ["ok":true,"window":meta] }

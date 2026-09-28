@@ -22,10 +22,15 @@ retains that MIT notice; it is not silently relicensed as Apache-only material.
 
 - `@earendil-works/pi-coding-agent` 0.87.1
 - `@earendil-works/pi-ai` 0.87.1
+- `@earendil-works/pi-tui` 0.87.1
 
 These are unmodified npm dependencies, not a vendored fork. The license is from
 [the upstream v0.87.1 tag](https://github.com/earendil-works/pi/blob/v0.87.1/LICENSE)
 and is included in [licenses/pi-MIT.txt](licenses/pi-MIT.txt).
+
+## terminal-image — terminal image fallback (MIT)
+
+`terminal-image` 5.0.1 is an unmodified npm dependency used for ANSI image conversion in terminals without native image support. Its upstream MIT notice is included in [licenses/terminal-image-MIT.txt](licenses/terminal-image-MIT.txt). Its dependencies retain their own licenses, recorded in the lockfile inventory.
 
 ## TypeBox and sharp — runtime dependencies
 

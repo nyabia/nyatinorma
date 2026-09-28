@@ -179,6 +179,14 @@
       "lockfilePath": "node_modules/@babel/runtime"
     },
     {
+      "name": "@borewit/text-codec",
+      "version": "0.2.2",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@borewit/text-codec"
+    },
+    {
       "name": "@earendil-works/pi-ai",
       "version": "0.87.1",
       "license": "MIT",
@@ -1347,6 +1355,14 @@
       "lockfilePath": "node_modules/@earendil-works/pi-telemetry"
     },
     {
+      "name": "@earendil-works/pi-tui",
+      "version": "0.87.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@earendil-works/pi-tui"
+    },
+    {
       "name": "@emnapi/runtime",
       "version": "1.11.3",
       "license": "MIT",
@@ -1787,6 +1803,230 @@
       "lockfilePath": "node_modules/@img/sharp-win32-x64"
     },
     {
+      "name": "@jimp/core",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/core"
+    },
+    {
+      "name": "@jimp/diff",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/diff"
+    },
+    {
+      "name": "@jimp/file-ops",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/file-ops"
+    },
+    {
+      "name": "@jimp/js-bmp",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/js-bmp"
+    },
+    {
+      "name": "@jimp/js-gif",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/js-gif"
+    },
+    {
+      "name": "@jimp/js-jpeg",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/js-jpeg"
+    },
+    {
+      "name": "@jimp/js-png",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/js-png"
+    },
+    {
+      "name": "@jimp/js-tiff",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/js-tiff"
+    },
+    {
+      "name": "@jimp/plugin-blit",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-blit"
+    },
+    {
+      "name": "@jimp/plugin-blur",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-blur"
+    },
+    {
+      "name": "@jimp/plugin-circle",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-circle"
+    },
+    {
+      "name": "@jimp/plugin-color",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-color"
+    },
+    {
+      "name": "@jimp/plugin-contain",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-contain"
+    },
+    {
+      "name": "@jimp/plugin-cover",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-cover"
+    },
+    {
+      "name": "@jimp/plugin-crop",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-crop"
+    },
+    {
+      "name": "@jimp/plugin-displace",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-displace"
+    },
+    {
+      "name": "@jimp/plugin-dither",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-dither"
+    },
+    {
+      "name": "@jimp/plugin-fisheye",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-fisheye"
+    },
+    {
+      "name": "@jimp/plugin-flip",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-flip"
+    },
+    {
+      "name": "@jimp/plugin-hash",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-hash"
+    },
+    {
+      "name": "@jimp/plugin-mask",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-mask"
+    },
+    {
+      "name": "@jimp/plugin-print",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-print"
+    },
+    {
+      "name": "@jimp/plugin-quantize",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-quantize"
+    },
+    {
+      "name": "@jimp/plugin-resize",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-resize"
+    },
+    {
+      "name": "@jimp/plugin-rotate",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-rotate"
+    },
+    {
+      "name": "@jimp/plugin-threshold",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/plugin-threshold"
+    },
+    {
+      "name": "@jimp/types",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/types"
+    },
+    {
+      "name": "@jimp/utils",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@jimp/utils"
+    },
+    {
       "name": "@protobufjs/aspromise",
       "version": "1.1.2",
       "license": "BSD-3-Clause",
@@ -1859,6 +2099,14 @@
       "lockfilePath": "node_modules/@protobufjs/utf8"
     },
     {
+      "name": "@sindresorhus/gifkit",
+      "version": "0.1.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@sindresorhus/gifkit"
+    },
+    {
       "name": "@smithy/core",
       "version": "3.35.0",
       "license": "Apache-2.0",
@@ -1915,6 +2163,22 @@
       "lockfilePath": "node_modules/@stablelib/base64"
     },
     {
+      "name": "@tokenizer/inflate",
+      "version": "0.4.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@tokenizer/inflate"
+    },
+    {
+      "name": "@tokenizer/token",
+      "version": "0.3.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@tokenizer/token"
+    },
+    {
       "name": "@types/node",
       "version": "25.9.8",
       "license": "MIT",
@@ -1931,12 +2195,68 @@
       "lockfilePath": "node_modules/@types/retry"
     },
     {
+      "name": "@xmldom/xmldom",
+      "version": "0.9.12",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/@xmldom/xmldom"
+    },
+    {
       "name": "agent-base",
       "version": "9.0.0",
       "license": "MIT",
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/agent-base"
+    },
+    {
+      "name": "ansi-escapes",
+      "version": "7.3.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/ansi-escapes"
+    },
+    {
+      "name": "ansi-regex",
+      "version": "6.4.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/ansi-regex"
+    },
+    {
+      "name": "ansi-styles",
+      "version": "6.2.3",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/ansi-styles"
+    },
+    {
+      "name": "any-base",
+      "version": "1.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/any-base"
+    },
+    {
+      "name": "app-path",
+      "version": "4.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/app-path"
+    },
+    {
+      "name": "await-to-js",
+      "version": "3.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/await-to-js"
     },
     {
       "name": "base64-js",
@@ -1955,6 +2275,14 @@
       "lockfilePath": "node_modules/bignumber.js"
     },
     {
+      "name": "bmp-ts",
+      "version": "1.0.9",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/bmp-ts"
+    },
+    {
       "name": "bowser",
       "version": "2.14.1",
       "license": "MIT",
@@ -1969,6 +2297,30 @@
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/buffer-equal-constant-time"
+    },
+    {
+      "name": "chalk",
+      "version": "5.6.2",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/chalk"
+    },
+    {
+      "name": "cli-cursor",
+      "version": "5.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/cli-cursor"
+    },
+    {
+      "name": "cross-spawn",
+      "version": "7.0.6",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/cross-spawn"
     },
     {
       "name": "data-uri-to-buffer",
@@ -2003,12 +2355,52 @@
       "lockfilePath": "node_modules/ecdsa-sig-formatter"
     },
     {
+      "name": "environment",
+      "version": "1.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/environment"
+    },
+    {
       "name": "esbuild",
       "version": "0.28.2",
       "license": "MIT",
       "development": true,
       "optional": false,
       "lockfilePath": "node_modules/esbuild"
+    },
+    {
+      "name": "execa",
+      "version": "5.1.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/execa"
+    },
+    {
+      "name": "onetime",
+      "version": "5.1.2",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/execa/node_modules/onetime"
+    },
+    {
+      "name": "signal-exit",
+      "version": "3.0.7",
+      "license": "ISC",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/execa/node_modules/signal-exit"
+    },
+    {
+      "name": "exif-parser",
+      "version": "0.1.12",
+      "license": "UNSPECIFIED",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/exif-parser"
     },
     {
       "name": "extend",
@@ -2033,6 +2425,14 @@
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/fetch-blob"
+    },
+    {
+      "name": "file-type",
+      "version": "21.3.4",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/file-type"
     },
     {
       "name": "formdata-polyfill",
@@ -2083,6 +2483,30 @@
       "lockfilePath": "node_modules/gcp-metadata"
     },
     {
+      "name": "get-east-asian-width",
+      "version": "1.6.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/get-east-asian-width"
+    },
+    {
+      "name": "get-stream",
+      "version": "6.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/get-stream"
+    },
+    {
+      "name": "gifwrap",
+      "version": "0.10.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/gifwrap"
+    },
+    {
       "name": "google-auth-library",
       "version": "10.9.1",
       "license": "Apache-2.0",
@@ -2113,6 +2537,94 @@
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/https-proxy-agent"
+    },
+    {
+      "name": "human-signals",
+      "version": "2.1.0",
+      "license": "Apache-2.0",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/human-signals"
+    },
+    {
+      "name": "ieee754",
+      "version": "1.2.1",
+      "license": "BSD-3-Clause",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/ieee754"
+    },
+    {
+      "name": "image-dimensions",
+      "version": "2.6.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/image-dimensions"
+    },
+    {
+      "name": "image-q",
+      "version": "4.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/image-q"
+    },
+    {
+      "name": "@types/node",
+      "version": "16.9.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/image-q/node_modules/@types/node"
+    },
+    {
+      "name": "is-fullwidth-code-point",
+      "version": "5.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/is-fullwidth-code-point"
+    },
+    {
+      "name": "is-stream",
+      "version": "2.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/is-stream"
+    },
+    {
+      "name": "isexe",
+      "version": "2.0.0",
+      "license": "ISC",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/isexe"
+    },
+    {
+      "name": "iterm2-version",
+      "version": "5.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/iterm2-version"
+    },
+    {
+      "name": "jimp",
+      "version": "1.6.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/jimp"
+    },
+    {
+      "name": "jpeg-js",
+      "version": "0.4.4",
+      "license": "BSD-3-Clause",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/jpeg-js"
     },
     {
       "name": "json-bigint",
@@ -2147,12 +2659,60 @@
       "lockfilePath": "node_modules/jws"
     },
     {
+      "name": "log-update",
+      "version": "8.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/log-update"
+    },
+    {
       "name": "long",
       "version": "5.3.2",
       "license": "Apache-2.0",
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/long"
+    },
+    {
+      "name": "marked",
+      "version": "18.0.11",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/marked"
+    },
+    {
+      "name": "merge-stream",
+      "version": "2.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/merge-stream"
+    },
+    {
+      "name": "mime",
+      "version": "3.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/mime"
+    },
+    {
+      "name": "mimic-fn",
+      "version": "2.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/mimic-fn"
+    },
+    {
+      "name": "mimic-function",
+      "version": "5.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/mimic-function"
     },
     {
       "name": "ms",
@@ -2179,6 +2739,30 @@
       "lockfilePath": "node_modules/node-fetch"
     },
     {
+      "name": "npm-run-path",
+      "version": "4.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/npm-run-path"
+    },
+    {
+      "name": "omggif",
+      "version": "1.0.10",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/omggif"
+    },
+    {
+      "name": "onetime",
+      "version": "7.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/onetime"
+    },
+    {
       "name": "openai",
       "version": "6.40.0",
       "license": "Apache-2.0",
@@ -2195,12 +2779,84 @@
       "lockfilePath": "node_modules/p-retry"
     },
     {
+      "name": "pako",
+      "version": "1.0.11",
+      "license": "(MIT AND Zlib)",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/pako"
+    },
+    {
+      "name": "parse-bmfont-ascii",
+      "version": "1.0.6",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/parse-bmfont-ascii"
+    },
+    {
+      "name": "parse-bmfont-binary",
+      "version": "1.0.6",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/parse-bmfont-binary"
+    },
+    {
+      "name": "parse-bmfont-xml",
+      "version": "1.1.6",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/parse-bmfont-xml"
+    },
+    {
       "name": "partial-json",
       "version": "0.1.7",
       "license": "MIT",
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/partial-json"
+    },
+    {
+      "name": "path-key",
+      "version": "3.1.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/path-key"
+    },
+    {
+      "name": "pixelmatch",
+      "version": "5.3.0",
+      "license": "ISC",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/pixelmatch"
+    },
+    {
+      "name": "pngjs",
+      "version": "6.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/pixelmatch/node_modules/pngjs"
+    },
+    {
+      "name": "plist",
+      "version": "3.1.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/plist"
+    },
+    {
+      "name": "pngjs",
+      "version": "7.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/pngjs"
     },
     {
       "name": "protobufjs",
@@ -2219,6 +2875,14 @@
       "lockfilePath": "node_modules/proxy-agent-negotiate"
     },
     {
+      "name": "restore-cursor",
+      "version": "5.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/restore-cursor"
+    },
+    {
       "name": "retry",
       "version": "0.13.1",
       "license": "MIT",
@@ -2233,6 +2897,14 @@
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/safe-buffer"
+    },
+    {
+      "name": "sax",
+      "version": "1.6.1",
+      "license": "BlueOak-1.0.0",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/sax"
     },
     {
       "name": "semver",
@@ -2251,12 +2923,124 @@
       "lockfilePath": "node_modules/sharp"
     },
     {
+      "name": "shebang-command",
+      "version": "2.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/shebang-command"
+    },
+    {
+      "name": "shebang-regex",
+      "version": "3.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/shebang-regex"
+    },
+    {
+      "name": "signal-exit",
+      "version": "4.1.0",
+      "license": "ISC",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/signal-exit"
+    },
+    {
+      "name": "simple-xml-to-json",
+      "version": "1.2.7",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/simple-xml-to-json"
+    },
+    {
+      "name": "slice-ansi",
+      "version": "9.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/slice-ansi"
+    },
+    {
       "name": "standardwebhooks",
       "version": "1.1.1",
       "license": "MIT",
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/standardwebhooks"
+    },
+    {
+      "name": "string-width",
+      "version": "8.3.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/string-width"
+    },
+    {
+      "name": "strip-ansi",
+      "version": "7.2.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/strip-ansi"
+    },
+    {
+      "name": "strip-final-newline",
+      "version": "2.0.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/strip-final-newline"
+    },
+    {
+      "name": "strtok3",
+      "version": "10.3.5",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/strtok3"
+    },
+    {
+      "name": "supports-terminal-graphics",
+      "version": "0.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/supports-terminal-graphics"
+    },
+    {
+      "name": "term-img",
+      "version": "7.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/term-img"
+    },
+    {
+      "name": "terminal-image",
+      "version": "5.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/terminal-image"
+    },
+    {
+      "name": "tinycolor2",
+      "version": "1.6.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/tinycolor2"
+    },
+    {
+      "name": "token-types",
+      "version": "6.1.2",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/token-types"
     },
     {
       "name": "ts-algebra",
@@ -2299,12 +3083,28 @@
       "lockfilePath": "node_modules/typescript"
     },
     {
+      "name": "uint8array-extras",
+      "version": "1.6.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/uint8array-extras"
+    },
+    {
       "name": "undici-types",
       "version": "7.24.6",
       "license": "MIT",
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/undici-types"
+    },
+    {
+      "name": "utif2",
+      "version": "4.1.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/utif2"
     },
     {
       "name": "web-streams-polyfill",
@@ -2315,12 +3115,68 @@
       "lockfilePath": "node_modules/web-streams-polyfill"
     },
     {
+      "name": "which",
+      "version": "2.0.2",
+      "license": "ISC",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/which"
+    },
+    {
+      "name": "wrap-ansi",
+      "version": "10.0.2",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/wrap-ansi"
+    },
+    {
       "name": "ws",
       "version": "8.21.3",
       "license": "MIT",
       "development": false,
       "optional": false,
       "lockfilePath": "node_modules/ws"
+    },
+    {
+      "name": "xml-parse-from-string",
+      "version": "1.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/xml-parse-from-string"
+    },
+    {
+      "name": "xml2js",
+      "version": "0.5.0",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/xml2js"
+    },
+    {
+      "name": "xmlbuilder",
+      "version": "11.0.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/xml2js/node_modules/xmlbuilder"
+    },
+    {
+      "name": "xmlbuilder",
+      "version": "15.1.1",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/xmlbuilder"
+    },
+    {
+      "name": "zod",
+      "version": "3.25.76",
+      "license": "MIT",
+      "development": false,
+      "optional": false,
+      "lockfilePath": "node_modules/zod"
     }
   ]
 }

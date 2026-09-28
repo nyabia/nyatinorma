@@ -9,6 +9,8 @@ import type {Snapshot,Candidate,WindowInfo} from './types.js';
 import {assertCanExecute} from './execution-state.js';
 import {native as macNative,capture as macCapture,execute as macExecute} from './macos.js';
 import {executeBridgeDrag} from './drag.js';
+import {appWindows,assertTargetSelected,bindAppWindow,currentTarget,resolveAppWindow,sameApp,setTarget,type AppWindow} from './app-target.js';
+import {InputNotSentError} from './input-error.js';
 export {backgroundEventOptions} from './macos.js';
 
 // Load our adapters with the extension, not on the first click/drag. Otherwise
@@ -17,21 +19,40 @@ export {backgroundEventOptions} from './macos.js';
 let client:CuaTransport|undefined;
 export function driverCapabilities(driver:'cua'|'macos-legacy',platform:NodeJS.Platform=process.platform,dragDriver:'cua'|'macos-bridge'='cua'){
   const separate=platform==='darwin'&&driver==='cua'&&dragDriver==='macos-bridge';
-  return {driver,platform,deliveryMode:'background',dragDriver:separate?'macos-bridge':driver,backgroundDrag:separate?'configured':driver==='cua'&&platform==='darwin'?'unsupported':'unverified',guidance:separate?'Use ny_drag for a grounded drag. Capture/click use Cua; drag uses the separately configured Nyatinorma bridge in background mode. Verify card movement in the returned image. Never infer success from dispatch.':driver==='cua'&&platform==='darwin'?'macOS cua-driver refuses background drag. Use observed navigation buttons or report a blocker. Never retry as foreground or switch drivers automatically.':'Verify every input with a fresh screenshot; platform support does not prove game compatibility.'};
+  return {driver,platform,deliveryMode:'background',dragDriver:separate?'macos-bridge':driver,backgroundDrag:separate?'configured':driver==='cua'&&platform==='darwin'?'unsupported':'unverified',guidance:separate?'For repeated scrolling use ny_scroll({goal,until}); use ny_act for mixed input goals. ny_drag is one coordinate gesture only. Capture/click use Cua; drag uses the separately configured Nyatinorma bridge in background mode. Verify card movement in the returned image. Never infer success from dispatch.':driver==='cua'&&platform==='darwin'?'macOS cua-driver refuses background drag. Use observed navigation buttons or report a blocker. Never retry as foreground or switch drivers automatically.':'Verify every input with a fresh screenshot; platform support does not prove game compatibility.'};
 }
 async function cua(){const c=await config();return client??=new CuaTransport(c.cuaDriverPath,['mcp'],c.desktopTimeoutSeconds*1000);}
 export async function closeDesktop(){await client?.close();client=undefined;}
 function rows(value:any,key:string):any[]{if(Array.isArray(value))return value;if(Array.isArray(value[key]))return value[key];throw new Error(`Unexpected cua-driver ${key} response`);}
 export async function targetWindows(){const c=await config();return rows(await (await cua()).call('list_windows',c.targetPid?{pid:c.targetPid}:{}),'windows');}
+let inventory:AppWindow[]=[];
+export function clearWindowInventory(){inventory=[];}
+async function allWindows(signal?:AbortSignal){
+  const c=await config();
+  const result=c.driver==='macos-legacy'?await macNative({action:'list_windows'},signal):await (await cua()).call('list_windows',{},false,signal);
+  return appWindows(rows(result,'windows'));
+}
+export async function listAppWindows(signal?:AbortSignal){inventory=await allWindows(signal);return inventory;}
+export async function prepareAppTarget(pid:number,windowId:number,signal?:AbortSignal){
+  const listed=inventory.find(w=>w.pid===pid&&w.windowId===windowId);
+  if(!listed)throw new Error('먼저 ny_target list를 호출하고 반환된 pid/windowId를 선택하세요.');
+  const live=(await allWindows(signal)).find(w=>w.pid===pid&&w.windowId===windowId&&sameApp(w,listed));
+  if(!live)throw new Error('목록 이후 창이 변경되었습니다. ny_target list로 다시 확인하세요.');
+  return bindAppWindow(live,await config());
+}
 export function chooseWindow(windows:any[],target:{targetPid?:number;targetWindowId?:number;targetApp:string}):WindowInfo {
   const matches=windows.filter(w=>w.is_on_screen!==false&&(!target.targetPid||w.pid===target.targetPid)&&(!target.targetWindowId||w.window_id===target.targetWindowId)&&(target.targetWindowId||(w.bounds??w.frame)?.height>40)&&((target.targetPid||target.targetWindowId)||w.app_name===target.targetApp||w.title===target.targetApp));
-  if(matches.length!==1)throw new Error(matches.length?'대상 창이 여러 개입니다. nyatinorma.json의 targetPid/targetWindowId로 지정하세요.':'설정된 게임 창을 찾지 못했습니다. 앱을 열고 targetApp 또는 targetPid/targetWindowId를 확인하세요.');
+  if(matches.length!==1)throw new Error(matches.length?'대상 창이 여러 개입니다. ny_target list/select로 선택하세요. CLI에서는 targetPid/targetWindowId로 지정할 수 있습니다.':'설정된 앱 창을 찾지 못했습니다. ny_target list/select로 선택하거나 CLI 대상 설정을 확인하세요.');
   const w=matches[0];if(w.is_on_screen===false)throw new Error('게임 창이 최소화되었거나 캡처 불가능한 상태입니다.');
   const b=w.bounds??w.frame;
   if(!Number.isInteger(w.pid)||!Number.isInteger(w.window_id)||!b||![b.x,b.y,b.width,b.height].every(Number.isFinite))throw new Error('Unsupported cua-driver window metadata');
   return {windowId:w.window_id,pid:w.pid,title:w.title??w.app_name,frame:b};
 }
-async function window(){return chooseWindow(await targetWindows(),await config());}
+async function window(signal?:AbortSignal){
+  assertTargetSelected();const target=currentTarget();
+  if(!target)return chooseWindow(await targetWindows(),await config());
+  const live=resolveAppWindow(await allWindows(signal),target);setTarget(live);return live;
+}
 async function diagnostics(){
   const client=await cua();
   const cursor=await client.call('get_cursor_position');
@@ -53,8 +74,9 @@ export async function capture(signal?:AbortSignal):Promise<Snapshot>{
   }
 }
 async function captureOnce(signal?:AbortSignal):Promise<Snapshot>{
-  const c=await config();if(c.driver==='macos-legacy')return macCapture(signal);
-  signal?.throwIfAborted();const w=await window(),id=`${Date.now()}-${randomUUID().slice(0,8)}`,path=resolve(dataDir,'captures',id+'.png');
+  assertTargetSelected();
+  const c=await config();if(c.driver==='macos-legacy'){if(currentTarget())await window(signal);return macCapture(signal);}
+  signal?.throwIfAborted();const w=await window(signal),id=`${Date.now()}-${randomUUID().slice(0,8)}`,path=resolve(dataDir,'captures',id+'.png');
   await (await cua()).call('get_window_state',{pid:w.pid,window_id:w.windowId,include_screenshot:true,screenshot_out_file:path,max_elements:1,max_depth:1},true,signal);
   signal?.throwIfAborted();
   // Keep driver screenshot pixels unchanged. Cua owns DPI/Retina conversion.
@@ -73,11 +95,18 @@ export function actionArgs(action:Candidate,s:Snapshot,duration:number){
 }
 export async function execute(action:Candidate,s:Snapshot,signal?:AbortSignal):Promise<any>{
   assertCanExecute();
-  const c=await config();if(c.driver==='macos-legacy')return macExecute(action,s,signal);
+  const c=await config();
   if(action.kind==='think')return;if(action.kind==='wait'){await new Promise(r=>setTimeout(r,1200));return;}
   if(action.kind==='drag'&&driverCapabilities(c.driver,process.platform,c.dragDriver).backgroundDrag==='unsupported')throw new Error('현재 macOS cua-driver는 백그라운드 드래그를 지원하지 않습니다. 별도 dragDriver 설정이 필요합니다. foreground 전환이나 드라이버 자동 교체는 하지 않습니다.');
-  signal?.throwIfAborted();const fresh=await window();
-  if(fresh.pid!==s.window.pid||fresh.windowId!==s.window.windowId||JSON.stringify(fresh.frame)!==JSON.stringify(s.window.frame))throw new Error('Target window changed; reobserve before input.');
+  try{
+    signal?.throwIfAborted();assertTargetSelected();
+    // The legacy adapter already checks geometry when no session target is used.
+    if(c.driver!=='macos-legacy'||currentTarget()){
+      const fresh=await window(signal);
+      if(fresh.pid!==s.window.pid||fresh.windowId!==s.window.windowId||JSON.stringify(fresh.frame)!==JSON.stringify(s.window.frame))throw new Error('Target window changed; capture the selected window before input.');
+    }
+  }catch(error){throw new InputNotSentError(error);}
+  if(c.driver==='macos-legacy')return macExecute(action,s,signal);
   if(action.kind==='drag'&&process.platform==='darwin'&&c.dragDriver==='macos-bridge')return executeBridgeDrag(action,s,c.dragDurationMs,c.showAgentPointer,signal);
   const before=await diagnostics();
   assertCanExecute(action.kind==='drag'?c.dragDurationMs:0);
