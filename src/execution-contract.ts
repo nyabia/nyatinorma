@@ -6,6 +6,8 @@ import {saveJSON} from './config.js';
 import {activeRunPath} from './runs.js';
 import {currentRun} from './runtime.js';
 import {parseStopAt} from './time.js';
+import {executionHost} from './host-context.js';
+import {pendingInput,recordPendingInput} from './input-lock.js';
 import type {Box,Candidate,Point,Snapshot} from './types.js';
 
 export const reservedExecutionIds=new Set(['done','wait','rebuild','stop','found','moved','adjust','still','no_change','other_screen','unclear','smaller','larger','reverse','retry','boundary']);
@@ -25,21 +27,26 @@ function archivePath(id:string){
   return resolve(activeRunPath(),'executions',id+'.json');
 }
 const ephemeral=new Map<string,Continuation>();
+let ephemeralLatest:string|undefined;
 export function newContinuation(input:{dragOnly?:boolean;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait'}):Continuation{
-  const now=Date.now(),stopAt=currentRun()?.stopAt;return {schemaVersion:1,id:randomUUID(),runId:currentRun()?.id,revision:input.revision,goal:input.goal,until:input.until,constraints:input.constraints,mode:input.mode,...(input.dragOnly?{dragOnly:true}:{}),createdAt:now,deadlineAt:stopAt?parseStopAt(stopAt):Number.MAX_SAFE_INTEGER,updatedAt:now,phase:'select',lastInput:{delivery:'not_sent',outcome:'not_applicable'},history:[],actions:0,rebuilds:0,selectCalls:0,waits:0};
+  const host=executionHost(),now=Date.now(),run=host?undefined:currentRun(),stopAt=run?.stopAt;return {schemaVersion:1,id:randomUUID(),runId:host?.id??run?.id,revision:input.revision,goal:input.goal,until:input.until,constraints:input.constraints,mode:input.mode,...(input.dragOnly?{dragOnly:true}:{}),createdAt:now,deadlineAt:host?.deadlineAt??(stopAt?parseStopAt(stopAt):Number.MAX_SAFE_INTEGER),updatedAt:now,phase:'select',lastInput:{delivery:'not_sent',outcome:'not_applicable'},history:[],actions:0,rebuilds:0,selectCalls:0,waits:0};
 }
 export async function loadContinuation(id?:string):Promise<Continuation|undefined>{
+  const host=executionHost();if(host){const value=await host.loadContinuation(id);if(value&&(value.schemaVersion!==1||value.runId!==host.id))throw new Error('Invalid host execution continuation');return value;}
   const path=journalPath();let value:Continuation|undefined;
   if(path){
     if(id){try{value=JSON.parse(await readFile(archivePath(id),'utf8'));}catch(e:any){if(e.code!=='ENOENT')throw e;}}
     if(!value){try{value=JSON.parse(await readFile(path,'utf8'));}catch(e:any){if(e.code!=='ENOENT')throw e;}}
   }
-  else if(id)value=ephemeral.get(id);
+  else value=ephemeral.get(id??ephemeralLatest??'');
   if(!value)return undefined;
   if(value.schemaVersion!==1||value.runId!==currentRun()?.id)throw new Error('Invalid execution continuation');
   return !id||value.id===id?value:undefined;
 }
 export async function saveContinuation(value:Continuation){
+  const pending=value.lastInput.outcome==='unresolved'&&value.lastInput.delivery!=='not_sent';
+  if(pending)recordPendingInput(value.id,true);
+  const host=executionHost();if(host){value.updatedAt=Date.now();await host.saveContinuation(value);if(!pending)recordPendingInput(value.id,false);return;}
   value.updatedAt=Date.now();const path=journalPath();
   if(path){
     await mkdir(resolve(activeRunPath(),'executions'),{recursive:true});
@@ -47,9 +54,11 @@ export async function saveContinuation(value:Continuation){
     // callers still see that unresolved attempt and cannot silently bypass it.
     await saveJSON(path,value);await saveJSON(archivePath(value.id),value);
   }
-  else ephemeral.set(value.id,structuredClone(value));
+  else {ephemeral.set(value.id,structuredClone(value));ephemeralLatest=value.id;}
+  if(!pending)recordPendingInput(value.id,false);
 }
 export async function assertNoUnresolvedInput(){
+  const pending=pendingInput();if(pending)throw new Error(`Input outcome unresolved in continuation ${pending}; resume it and observe before another input.`);
   const prior=await loadContinuation();
   if(prior&&prior.lastInput.outcome==='unresolved'&&prior.lastInput.delivery!=='not_sent')throw new Error(`Input outcome unresolved in continuation ${prior.id}; resume it and observe before another input.`);
 }

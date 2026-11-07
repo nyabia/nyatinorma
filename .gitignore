@@ -1,6 +1,8 @@
 node_modules/
 .nyatinorma/
 dist/
+integrations/omp/state/
+.tmpdl/
 .DS_Store
 Nyatinorma Bridge.app/
 

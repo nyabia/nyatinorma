@@ -2,6 +2,7 @@
 import {config} from './config.js';
 import type {ProviderHeaders} from '@earendil-works/pi-ai';
 import type {Decision} from './types.js';
+import {withDecisionBackend} from './decision-backend.js';
 
 export type SelectHistory=readonly {prompt:string;image?:string;answer:string}[];
 export function selectionHistory(state:string,choices:{label:string;box?:unknown}[],image?:string,history:SelectHistory=[]){
@@ -46,6 +47,12 @@ export function decodeDecision(response:any, ids:string[]): Omit<Decision,'elaps
 }
 
 export async function select(state:string, choices:{id:string;label:string;box?:unknown}[],signal?:AbortSignal,image?:string,connection?:OllamaConnection,history:SelectHistory=[]):Promise<Decision> {
+  const c=await config();
+  return withDecisionBackend(state,choices,()=>selectLegacyOllama(state,choices,signal,image,connection,history),signal,image,c.decision,history);
+}
+
+// provider fallback은 이 원시 경로를 사용하여 System One을 다시 시도하지 않는다.
+export async function selectLegacyOllama(state:string, choices:{id:string;label:string;box?:unknown}[],signal?:AbortSignal,image?:string,connection?:OllamaConnection,history:SelectHistory=[]):Promise<Decision> {
   if (choices.length<2 || choices.length>12) throw new Error('SELECT requires 2–12 choices including THINK.');
   const start = performance.now();
   const response = await chat({

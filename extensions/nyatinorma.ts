@@ -17,6 +17,7 @@ import {currentRun,currentScenario} from '../src/runtime.js';
 import {createRun,listRuns,selectRun,setRunStatus,setRunDeadline,blockRun,configureRun,migrateLegacyRuns,bindingFromBranch} from '../src/runs.js';
 import {knowledgeContext,readLessons,rememberLesson,lessonEvidence,type KnowledgeScope} from '../src/skills.js';
 import {selectForModel,generateForModel} from '../src/selection.js';
+import {decisionBackendInfo} from '../src/decision-backend.js';
 import {streamOllama} from '../src/pi-ollama.js';
 import {boundaryCompaction} from '../src/context-compaction.js';
 import registerPruneCompaction from './prune-compaction.js';
@@ -100,12 +101,20 @@ export default async function(pi:ExtensionAPI) {
   let showSleepwalkPreview=true;
   function modelVision(ctx:ExtensionContext,onUpdate?:PreviewUpdate){
     const preview=createLivePreview(()=>showSleepwalkPreview&&ctx.hasUI,onUpdate);
+    let lastRoute='';
     return {
       status:(label:string)=>{ctx.ui.setStatus('nyatinorma',label);preview.status(label);},
       choose:async(state:string,choices:Parameters<typeof selectForModel>[3],signal?:AbortSignal,image?:string,history?:Parameters<typeof selectForModel>[6])=>{
         await preview.show(image,`SELECT · ${choices.map(c=>c.id).join(' / ')}`);
         const result=await selectForModel(ctx.modelRegistry,ctx.model,state,choices,signal,image,history);
-        preview.status(`SELECT → ${result.choice??'불확실'}`);return result;
+        const backend=decisionBackendInfo(result);
+        const route=backend?(backend.fallback?'System One → legacy':`System One · ${backend.model??backend.wire}`):'legacy';
+        if(route!==lastRoute){
+          if(backend?.fallback)ctx.ui.notify(`판정 경로 전환: System One → 기존 SELECT (${backend.errorCode??'오류'}). 입력은 재전송하지 않습니다.`,'warning');
+          else if(lastRoute&&backend)ctx.ui.notify(`판정 경로: ${route}`,'info');
+          lastRoute=route;
+        }
+        preview.status(`SELECT [${route}] → ${result.choice??'불확실'}`);return result;
       },
       generate:async(prompt:string,image:string,signal?:AbortSignal)=>{
         await preview.show(image,'후보 생성 · 현재 화면');

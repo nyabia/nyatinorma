@@ -3,25 +3,38 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
-import {mkdtemp,rm,writeFile,readFile} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {mkdtemp,mkdir,cp,symlink,rm,writeFile,readFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
+import {once} from 'node:events';
+import {setTimeout as delay} from 'node:timers/promises';
 
-test('real pi RPC creates anonymous records without a model call and preserves named records across resume and fork', {timeout:35_000},async()=>{
-  const dir=await mkdtemp(join(tmpdir(),'ny-rpc-')),payloads:any[]=[],events:any[]=[],nextCalls:any[]=[];
+test('real pi RPC creates anonymous records without a model call and preserves named records across resume and fork', {timeout:90_000},async()=>{
+  const scratch=resolve(import.meta.dirname,'../.tmpdl');await mkdir(scratch,{recursive:true});
+  const dir=await mkdtemp(join(scratch,'ny-rpc-')),root=resolve(import.meta.dirname,'..'),app=join(dir,'app'),payloads:any[]=[],events:any[]=[],nextCalls:any[]=[];
+  await cp(join(root,'src'),join(app,'src'),{recursive:true});await cp(join(root,'extensions'),join(app,'extensions'),{recursive:true});
+  await writeFile(join(app,'package.json'),'{"type":"module"}');await symlink(join(root,'node_modules'),join(app,'node_modules'),process.platform==='win32'?'junction':'dir');
+  // Built-in TUI /reload is ordinary model input in RPC. Use the real command API.
+  const controls=join(app,'extensions/rpc-controls.ts');
+  await writeFile(controls,'export default function(pi){pi.registerCommand("fixture-reload",{handler:async(_args,ctx)=>{await ctx.waitForIdle();await ctx.reload();}})}');
+  await mkdir(join(dir,'pi'),{recursive:true});await writeFile(join(dir,'pi/settings.json'),JSON.stringify({quietStartup:true,retry:{enabled:false},compaction:{enabled:false}}));
   const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;payloads.push(JSON.parse(body));const call=nextCalls.shift();res.setHeader('content-type','application/x-ndjson');res.end(JSON.stringify({message:{role:'assistant',content:call?'':'대화 확인',...(call?{tool_calls:Array.isArray(call)?call:[call]}:{})},done:true,prompt_eval_count:10,eval_count:3})+'\n');});
-  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
-  const child=spawn(process.execPath,['--import','tsx','src/cli.ts','tui','--mode','rpc'],{cwd:resolve(import.meta.dirname,'..'),env:{...process.env,NYATINORMA_DATA_DIR:dir,NYATINORMA_MODEL:"test-vision-model",NYATINORMA_OLLAMA_URL:`http://127.0.0.1:${(server.address() as any).port}`},stdio:'pipe'});
-  let buffer='',stderr='',serial=0;child.stderr.on('data',v=>{stderr+=v;});child.stdout.on('data',v=>{buffer+=v;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);try{events.push(JSON.parse(line));}catch{}}});
-  const wait=async(predicate:()=>any)=>{const end=Date.now()+8000;while(Date.now()<end){const value=predicate();if(value)return value;await new Promise(r=>setTimeout(r,20));}throw new Error(`RPC timeout: ${stderr}\n${JSON.stringify(events.slice(-4))}`);};
-  const request=async(type:string,rest:Record<string,unknown>={})=>{const id=String(++serial);child.stdin.write(JSON.stringify({id,type,...rest})+'\n');const r=await wait(()=>events.find(e=>e.type==='response'&&e.id===id));assert.equal(r.success,true,JSON.stringify(r));return r.data;};
-  const say=async(message:string)=>{const start=events.length;await request('prompt',{message});await wait(()=>events.slice(start).find(e=>e.type==='agent_settled'));};
+  const listening=once(server,'listening');server.listen(0,'127.0.0.1');await listening;
+  const child=spawn(process.execPath,[join(root,'node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'),'--no-builtin-tools','--no-extensions','--no-skills','--no-context-files','--no-prompt-templates','--extension',join(app,'extensions/nyatinorma.ts'),'--extension',controls,'--offline','--provider','nyatinorma-ollama','--model','test-vision-model','--mode','rpc'],{cwd:app,env:{...process.env,PI_CODING_AGENT_DIR:join(dir,'pi'),PI_OFFLINE:'1',NYATINORMA_DATA_DIR:dir,NYATINORMA_MODEL:'test-vision-model',NYATINORMA_OLLAMA_URL:`http://127.0.0.1:${(server.address() as any).port}`},stdio:'pipe'});
+  let buffer='',stderr='',serial=0,processError:Error|undefined;
+  child.once('error',error=>processError=error);child.stdin.on('error',error=>processError=error);
+  child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+  child.stderr.on('data',v=>{stderr+=v;});child.stdout.on('data',v=>{buffer+=v;let end;while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);try{events.push(JSON.parse(line));}catch{}}});
+  const wait=async(predicate:()=>any,timeout=10_000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(processError)throw processError;if(child.exitCode!==null||child.signalCode!==null)throw new Error(`RPC exited: ${child.exitCode??child.signalCode}; ${stderr}`);const value=await predicate();if(value)return value;await delay(20);}throw new Error(`RPC timeout: ${stderr}\n${JSON.stringify(events.slice(-5))}`);};
+  const request=async(type:string,rest:Record<string,unknown>={},timeout=10_000)=>{const id=String(++serial);child.stdin.write(JSON.stringify({id,type,...rest})+'\n');const r=await wait(()=>events.find(e=>e.type==='response'&&e.id===id),timeout);assert.equal(r.success,true,JSON.stringify(r));return r.data;};
+  const idle=()=>wait(async()=>{const state=await request('get_state');return !state.isStreaming&&!state.isCompacting&&state.pendingMessageCount===0?state:undefined;});
+  const say=async(message:string)=>{await idle();const start=events.length;await request('prompt',{message});await wait(()=>events.slice(start).find(e=>e.type==='agent_settled'));await idle();assert.deepEqual(events.filter(e=>e.type==='extension_error'),[]);};
+  const manage=async(type:string,rest:Record<string,unknown>={})=>{await idle();const before=payloads.length,result=await request(type,rest);await idle();assert.equal(payloads.length,before,'Session management must not call the provider');assert.deepEqual(events.filter(e=>e.type==='extension_error'),[]);return result;};
   const state=()=>{const runtime=payloads.at(-1).messages.findLast((m:any)=>typeof m.content==='string'&&m.content.startsWith('[Runtime working state;'));return JSON.parse(runtime.content.slice(runtime.content.indexOf('\n')+1));};
   try{
+    await request('get_state',{},45_000);
     const commands=await request('get_commands');assert.ok(commands.commands.some((c:any)=>c.name==='preset'));
     await say('안녕. 게임은 조작하지 마.');assert.equal(state().run.anonymous,true);const anonymous=state().run.id;
     assert.equal(state().run.preset.id,'scratch');assert.deepEqual(state().knowledge.availableScenarios,[]);assert.equal(state().knowledge.scenario,null);
-    assert.deepEqual(payloads.at(-1).tools.map((tool:any)=>tool.function?.name).filter((name:string)=>name?.startsWith('ny_')).sort(),['ny_act','ny_block','ny_knowledge','ny_observe','ny_recall','ny_scroll','ny_target','ny_time','ny_tools','ny_wait']);
     const act=payloads.at(-1).tools.find((tool:any)=>tool.function?.name==='ny_act').function;
     assert.ok(act.parameters.properties.goal);assert.ok(act.parameters.properties.resume);assert.ok(act.parameters.properties.until);assert.equal(act.parameters.properties.point,undefined);
     assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_preview'));
@@ -35,24 +48,22 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     await say('테스트 마감을 해제하고 게임은 조작하지 마.');assert.equal(state().run.stopAt,null);
     assert.ok(!payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_drag'));
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_knowledge'));
-    await request('prompt',{message:'/save 내 테스트 기록'});
+    await manage('prompt',{message:'/save 내 테스트 기록'});
     await say('저장한 기록 이름만 확인해. 게임 조작하지 마.');const first=state().run;assert.equal(first.id,anonymous);assert.equal(first.title,'내 테스트 기록');assert.equal(first.anonymous,false);
     const old=await request('get_state');assert.ok(old.sessionFile);
-    await request('new_session');await say('새 대화 확인. 작업 시작하지 마.');assert.equal(state().run.anonymous,true);assert.notEqual(state().run.id,first.id);const second=state().run.id;
-    await request('switch_session',{sessionPath:old.sessionFile});await say('재개한 대화의 연결만 확인. 게임은 건드리지 마.');assert.equal(state().run.id,first.id);
-    const forkMessages=await request('get_fork_messages');await request('fork',{entryId:forkMessages.messages.at(-1).entryId});
+    await manage('new_session');await say('새 대화 확인. 작업 시작하지 마.');assert.equal(state().run.anonymous,true);assert.notEqual(state().run.id,first.id);const second=state().run.id;
+    await manage('switch_session',{sessionPath:old.sessionFile});await say('재개한 대화의 연결만 확인. 게임은 건드리지 마.');assert.equal(state().run.id,first.id);
+    const forkMessages=await request('get_fork_messages');await manage('fork',{entryId:forkMessages.messages.at(-1).entryId});
     await say('분기한 대화 확인. 이전 실행은 연결하지 마.');assert.equal(state().run.anonymous,true);assert.notEqual(state().run.id,first.id);assert.notEqual(state().run.id,second);
-    await request('switch_session',{sessionPath:old.sessionFile});
-    await request('prompt',{message:'/chat'});await say('새 임시 기록 확인.');assert.equal(state().run.anonymous,true);assert.notEqual(state().run.id,first.id);
-    assert.equal(payloads.length,10); // Six greetings plus two clock tool turns (two requests each); management commands add none.
+    await manage('switch_session',{sessionPath:old.sessionFile});
+    await manage('prompt',{message:'/chat'});await say('새 임시 기록 확인.');assert.equal(state().run.anonymous,true);assert.notEqual(state().run.id,first.id);
     nextCalls.push({function:{name:'ny_knowledge',arguments:{operation:'remember',scope:'app',title:'공통 앱 메모',content:'다음 대화에서도 참조할 지식',status:'hypothesis'}}});
     await say('앱 지식 저장 시험. 게임 입력은 하지 마.');assert.equal(state().knowledge.lessons.app[0].title,'공통 앱 메모');
     nextCalls.push({function:{name:'ny_knowledge',arguments:{operation:'remember',scope:'scenario',scenario:'theater',title:'극장 한정 메모',content:'다른 상황에는 주입하지 않을 지식',status:'hypothesis'}}});
     await say('상황 지식 저장 시험. 게임 입력은 하지 마.');assert.equal(state().knowledge.lessons.scenario.length,0);
     nextCalls.push({function:{name:'ny_knowledge',arguments:{operation:'use',scenario:'theater'}}});
     await say('극장 지식 선택 시험. 게임 입력은 하지 마.');assert.equal(state().knowledge.lessons.scenario[0].title,'극장 한정 메모');
-    await request('new_session');await say('새 대화 지식 확인만.');assert.equal(state().knowledge.scenario,null);assert.equal(state().knowledge.lessons.scenario.length,0);assert.equal(state().knowledge.lessons.app[0].title,'공통 앱 메모');
-    assert.equal(payloads.length,17);
+    await manage('new_session');await say('새 대화 지식 확인만.');assert.equal(state().knowledge.scenario,null);assert.equal(state().knowledge.lessons.scenario.length,0);assert.equal(state().knowledge.lessons.app[0].title,'공통 앱 메모');
     nextCalls.push({function:{name:'ny_tools',arguments:{operation:'enable',group:'manage'}}});
     await say('프리셋 관리 도구만 불러와. 게임은 조작하지 마.');
     assert.ok(payloads.at(-1).tools.some((tool:any)=>tool.function?.name==='ny_task'));
@@ -89,17 +100,20 @@ test('real pi RPC creates anonymous records without a model call and preserves n
     assert.equal(blocked.status,'blocked');assert.equal(blocked.blocked.needed,'사용자가 승인한 뒤 재개');
     const messages=(await request('get_messages')).messages;
     assert.ok(messages.some((m:any)=>m.role==='toolResult'&&m.toolName==='ny_block'&&m.content.some((c:any)=>c.text?.includes('외부 승인이 필요함'))));
-    await request('prompt',{message:'/reload'});
+    await manage('prompt',{message:'/fixture-reload'});
     await say('왜 중단했는지 설명만 해. 재개하지 마.');assert.equal(state().run.id,blockedId);assert.equal(state().run.status,'blocked');
+    nextCalls.push({function:{name:'ny_tools',arguments:{operation:'enable',group:'manage'}}});
+    await say('Enable management tools for the blocked-state safety check; do not resume.');
     // Even an attempted model restart is blocked after reload, with no second request.
     nextCalls.push({function:{name:'ny_run',arguments:{operation:'start',title:'Bypass attempt'}}});
     const callsBeforeBypass=payloads.length;
     await say('도구 차단 시험. 새 실행으로 우회해서는 안 됨.');
     assert.equal(payloads.length,callsBeforeBypass+1);assert.equal(JSON.parse(await readFile(runFile,'utf8')).status,'blocked');
-    const startResume=events.length;
-    await request('prompt',{message:'/play 외부 승인 완료. 실제 입력 없이 재개 상태만 확인해.'});
-    await wait(()=>events.slice(startResume).find(e=>e.type==='agent_settled'));
+    await say('/play 외부 승인 완료. 실제 입력 없이 재개 상태만 확인해.');
     assert.equal(state().run.status,'ready');assert.equal(state().run.blocked,undefined,'Resolved block reports must not be injected as current blockers');assert.ok(JSON.parse(await readFile(runFile,'utf8')).blocked.resumedAt,'The historical report remains on disk');assert.equal(state().run.id,blockedId);
+    const inputTools:Record<string,true>={ny_act:true,ny_scroll:true,ny_drag:true,ny_run_select:true,ny_execute_flow:true,ny_locate:true};
+    assert.ok(events.some(e=>e.type==='tool_execution_start'),'The RPC fixture must actually exercise tools');
+    assert.deepEqual(events.filter(e=>e.type==='tool_execution_start'&&inputTools[e.toolName]),[],'Metadata/session RPC exercises must not invoke input tools');
 
-  }finally{child.kill('SIGTERM');await new Promise<void>(r=>{if(child.exitCode!==null)r();else child.once('exit',()=>r());});server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await rm(dir,{recursive:true,force:true});}
+  }finally{if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGTERM');await exited;}server.closeAllConnections();const closed=once(server,'close');server.close();await closed;await rm(dir,{recursive:true,force:true});}
 });

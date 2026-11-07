@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import type {DecisionBackendConfig} from './decision-backend.js';
+import {executionHost} from './host-context.js';
 export const root = resolve(import.meta.dirname, '..');
 export const dataDir = resolve(process.env.NYATINORMA_DATA_DIR??resolve(root, '.nyatinorma'));
 export type Config = {
+  decision?:DecisionBackendConfig;
   ollamaThinkingMode:'boolean'|'levels';
   knowledgeAppId?:string;
   contextWindow:number;maxTokens:number;reasoning:boolean;
@@ -26,6 +29,7 @@ export async function initialize() {
   for (const dir of ['captures','sets','traces','pi','bin']) await mkdir(resolve(dataDir,dir),{recursive:true});
 }
 export async function config(): Promise<Config> {
+  const host=executionHost();if(host)return host.config();
   await initialize();
   let overrides = {};
   try { overrides = JSON.parse(await readFile(resolve(root,'nyatinorma.json'),'utf8')); }

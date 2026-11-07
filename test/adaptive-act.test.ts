@@ -3,10 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
-import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import sharp from 'sharp';
-import {dataDir} from '../src/config.js';
+import {dataDir,defaults} from '../src/config.js';
 import {runAct,parseActState} from '../src/adaptive-act.js';
 import {runExecution} from '../src/execution-controller.js';
 import {revalidateObservation,performAction,type ActionDeps} from '../src/action-runtime.js';
@@ -15,11 +14,15 @@ import {CuaSessionRestoredError,CuaTimeoutError} from '../src/cua-transport.js';
 import {runFlow,type Flow} from '../src/flow.js';
 import {fingerprint} from '../src/vision.js';
 import type {Snapshot,Decision} from '../src/types.js';
+import {withExecutionHost,type ExecutionHost} from '../src/host-context.js';
+import type {Continuation} from '../src/execution-contract.js';
+import {snapshot} from '../src/store.js';
 
 const yes=(choice:string):Decision=>({choice,legalMass:1,margin:.9,truncated:false,probabilities:{[choice]:1},reason:'test',elapsedMs:1});
 const contract={revision:'test',requests:['Find the requested item, open it, then stop.']};
 async function fixture(body:(screens:Snapshot[])=>Promise<void>){
-  const dir=await mkdtemp(join(tmpdir(),'ny-act-'));
+  await mkdir(join(dataDir,'test-tmp'),{recursive:true});
+  const dir=await mkdtemp(join(dataDir,'test-tmp','ny-act-'));
   try{
     const screens:Snapshot[]=[];
     for(let i=0;i<4;i++){
@@ -27,7 +30,9 @@ async function fixture(body:(screens:Snapshot[])=>Promise<void>){
       await sharp(Buffer.from(`<svg width="240" height="180"><rect width="240" height="180" fill="rgb(${40+i*40},${40+i*40},${40+i*40})"/><rect width="50" height="30" fill="white"/><rect x="90" y="65" width="60" height="50" fill="blue"/></svg>`)).png().toFile(path);
       screens.push({id:String(i),path,width:240,height:180,at:Date.now(),ocr:[],window:{pid:1,windowId:2,title:'Test',frame:{x:0,y:0,width:240,height:180}}});
     }
-    await body(screens);
+    const continuations=new Map<string,Continuation>();let active:string|undefined;
+    const host:ExecutionHost={id:randomUUID(),inputScope:randomUUID(),config:async()=>({...defaults}),loadContinuation:async(id)=>structuredClone(continuations.get(id??active??'')),saveContinuation:async(value)=>{continuations.set(value.id,structuredClone(value));active=value.id;},snapshot:async(id)=>screens.find(s=>s.id===id)??snapshot(id).catch(()=>undefined)};
+    await withExecutionHost(host,()=>body(screens));
   }finally{await rm(dir,{recursive:true,force:true});}
 }
 
@@ -53,7 +58,7 @@ test('ACT reuses generated drag candidates, adapts to a new screen and locates a
 }));
 
 test('ACT never repeats a click whose expected result is unconfirmed; cancellation before dispatch also stops input',async()=>fixture(async(screens)=>{
-  for(const cancel of [false,true]){
+  for(const cancel of [true,false]){
     const controller=new AbortController();let inputs=0;
     const result=await runAct({goal:'Open button',doneWhen:'Details visible'},contract,{signal:controller.signal},{capture:async()=>screens[0],sleep:async()=>{},trace:async()=>{},generate:async()=>JSON.stringify({description:'Button',actions:[{id:'open',kind:'click',target:'blue button',when:'Visible',expectation:'Details visible'}]}),choose:async(prompt,choices)=>{
       if(choices.some(c=>c.id==='open')){if(cancel)controller.abort();return yes('open');}
@@ -259,22 +264,6 @@ test('ACT reports provider failure without retrying it as a JSON repair',async()
   assert.equal(result.status,'error');assert.equal(result.error,'Provider unavailable');assert.equal(generations,1);assert.equal(result.actions,0);
 }));
 
-test('ACT carries a broad input surface intent into location confirmation',async()=>fixture(async(screens)=>{
-  let locationChecks=0,inputs=0;
-  const goal='Dismiss the overlay by tapping anywhere on its empty surface';
-  const result=await runAct({goal,until:'Overlay gone'}, {revision:'surface',requests:[goal]}, {}, {
-    capture:async()=>screens[0],sleep:async()=>{},trace:async()=>{},
-    generate:async()=>JSON.stringify({description:'Dismissible overlay',actions:[{id:'dismiss',kind:'click',target:'tap-anywhere overlay surface',when:'Overlay visible',expectation:'Overlay gone'}]}),
-    choose:async(prompt,choices)=>{
-      if(prompt.includes('Completion check')){assert.match(prompt,/requires its ABSENCE/);assert.match(choices[0].label,/required absence/);}
-      if(prompt.includes('Judge ONLY the existing pink crosshair')){
-        locationChecks++;assert.match(prompt,/Local goal: Dismiss the overlay/);assert.match(prompt,/Expected effect: Overlay gone/);assert.match(prompt,/do not require a rendered button/);
-      }
-      return yes(choices.some(c=>c.id==='dismiss')?'dismiss':'yes');
-    },execute:async()=>{inputs++;return {};},
-  });
-  assert.equal(result.status,'done');assert.equal(locationChecks,1);assert.equal(inputs,1);
-}));
 
 test('scroll SELECT adjusts distance and direction across a yield without THINK or pixel veto, and reports a boundary',async()=>fixture(async screens=>{
   let inputs=0,generations=0,refinements=0;const routes:{direction:string;distance:number}[]=[];

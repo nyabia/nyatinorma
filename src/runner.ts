@@ -67,7 +67,7 @@ export async function actOnce(input:{snapshotId:string;action:Candidate;anchor?:
   if(input.anchor)validateBox(input.anchor);
   if(!['click','drag'].includes(input.action.kind))throw new Error('Expected a click or drag');
   const action={...input.action,box:input.action.box??resolveTarget(input.action,original.width,original.height).box,to:resolveDestination(input.action)};
-  const candidate:ExecutionCandidate={id:'observed-action',kind:action.kind as 'click'|'drag',label:action.label,when:action.intent,expectation:input.expectation,
+  const candidate:ExecutionCandidate={id:action.id,kind:action.kind as 'click'|'drag',label:action.label,when:action.intent,expectation:input.expectation,
     ...(action.kind==='click'?{target:input.grounded?.target??action.label,grounded:input.grounded}:{}),preparedAction:action};
   const result=await runExecution({goal:`${action.label}: ${input.expectation}`,until:input.expectation,maxActions:1},async()=>({description:`Single observed action: ${action.label}`,actions:[candidate]}),
     input.work??{revision:'observed-action',requests:[action.intent,input.expectation]},{signal},{choose});

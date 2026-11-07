@@ -12,8 +12,9 @@
     "observe": "tsx src/cli.ts observe",
     "probe": "tsx src/cli.ts probe",
     "probe:background": "tsx scripts/background-probe.ts",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --test --test-concurrency=2 test/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "build:omp": "bun run --cwd integrations/omp build",
     "build:native": "sh scripts/build-native.sh",
     "licenses:report": "tsx scripts/license-report.ts"
   },
@@ -36,6 +37,7 @@
   "files": [
     "src/",
     "extensions/",
+    "integrations/omp/",
     "resources/",
     "native/",
     "scripts/",

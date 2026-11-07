@@ -1,6 +1,6 @@
 # nyatinorma
 
-pi의 모델 provider와 TUI로 실행하는 로컬 computer-use 에이전트입니다. Bun, Tauri, 별도 모델 서버는 필요하지 않습니다.
+pi의 모델 provider와 TUI로 실행하는 로컬 computer-use 에이전트입니다. 독립 실행에는 Bun, Tauri, 별도 모델 서버가 필요하지 않습니다. 같은 저장소의 `integrations/omp`는 공통 sleepwalk 실행기를 omp의 기존 computer 인터페이스에 연결합니다.
 
 기본 프리셋은 없습니다. 자연어로 작업을 요청하면 모델이 관측하며 진행하고, 재사용할 절차를 발견하면 스스로 프리셋·지식·후보 세트로 저장합니다. 저장은 새 작업 실행을 뜻하지 않습니다.
 
@@ -74,11 +74,47 @@ SGLang 등 OpenAI 호환 서버 예시(기존 providers 항목은 보존하세�
 
 시작 시 provider/model을 강제하지 않으며 pi의 저장된 선택과 명시적 `--provider`/`--model` 옵션을 따릅니다. 기본 Ollama는 `nyatinorma.json` 설정으로 추가 등록하는 선택지입니다. 서버를 추가한다고 기존 Ollama가 내려가거나 설정이 바뀌지 않습니다.
 
-THINK는 pi의 provider 연결을 사용합니다. SELECT도 현재 선택된 모델을 사용하며, OpenAI 호환 경로는 pi의 인증·주소·추론 호환 설정을 재사용합니다. 네이티브 Ollama와 OpenAI Chat Completions logprobs 경로를 지원하고, logprobs 누락/불완전한 점수는 실행 없이 THINK로 반환합니다. 그 밖의 API는 THINK/직접 행동을 사용할 수 있지만 SELECT는 지원 오류를 알립니다. 다른 서버로 자동 대체하지 않습니다.
+THINK와 후보 생성은 pi의 현재 provider 연결을 사용합니다. 기본 SELECT도 현재 선택된 모델을 사용하며, OpenAI 호환 경로는 pi의 인증·주소·추론 호환 설정을 재사용합니다. 네이티브 Ollama와 OpenAI Chat Completions logprobs 경로를 지원하고, logprobs 누락/불완전한 점수는 실행 없이 THINK로 반환합니다. 그 밖의 API는 THINK/직접 행동을 사용할 수 있지만 legacy SELECT는 지원 오류를 알립니다.
+
+### 선택적 System One 판정
+
+`nyatinorma.json`에 `decision`을 지정하면 THINK/후보 생성 모델은 그대로 두고 빠른 SELECT만 decision-native 모델에 맡깁니다. 기존 경로로 돌아가려면 `decision`을 지우거나 `mode:"legacy"`를 사용합니다.
+
+```json
+{
+  "decision": {
+    "mode": "systemone",
+    "url": "http://127.0.0.1:11434",
+    "model": "d3:4b",
+    "wire": "ollama",
+    "timeoutMs": 30000,
+    "fallback": true
+  }
+}
+```
+
+`wire:"ollama"`는 `/v1/systemone`의 top-level `images` 배열을 사용합니다. Jev/TypeSafe 서버는 `wire:"typesafe"`로 asset 참조 형식을 사용합니다. 인증이 필요한 서버는 `headersFromEnv:{"Authorization":"SYSTEMONE_AUTHORIZATION"}`처럼 헤더 값을 환경변수로 참조합니다. 해당 환경변수에는 `Bearer …` 등 서버가 요구하는 전체 헤더 값을 넣고 설정 파일에는 비밀값을 저장하지 않습니다.
+
+기본 `fallback:true`는 System One의 통신·응답 오류를 기존 SELECT 경로로 전환하며 전환 사실을 표시합니다. `fallback:false`는 오류를 그대로 반환합니다. 사용자 취소는 폴백하지 않으며, 낮은 선택 점수 자체를 서버 고장으로 취급하지 않습니다. 모델 전환은 판정 요청에만 적용되고 입력을 재전송하지 않습니다.
+
+System One 설정은 Ollama 모델 다운로드, GPU 배치, 실제 `num_ctx`, THINK의 컨텍스트 한도를 바꾸지 않습니다. [Ollama System One 문서](https://docs.ollama.com/api/systemone)의 이미지·요청 크기 한도를 따릅니다.
+
+### omp 통합
+
+`integrations/omp`는 별도 저장소가 아니라 이 저장소의 플러그인 패키지입니다. 루트에서 `npm ci`, `npm run build:omp`, `omp plugin link ./integrations/omp`를 실행하고 omp를 재시작한 뒤 `nyatinorma_setup`을 호출합니다.
+
+| 역할 | 담당 |
+|---|---|
+| 목표·행동 후보·완료 조건, 막힌 상황의 새 판단 | 상위 모델 |
+| 행동 선택·클릭 대상 검증 | omp `judge()` 또는 선택한 System One 모델 |
+| 대기·스크롤·행동·결과 확인·중단·재개 | nyatinorma 공통 `runExecution` / `runAct` |
+| 실제 창 캡처·클릭·드래그 | omp의 기존 `computer` |
+
+`wait / scroll / act / status / stop / resume`를 제공합니다. 판정 모델만 로컬로 바꿔도 상위 계획까지 자동으로 대체되지는 않습니다. 설치·후보 형식·취소·입력 보호는 [omp 사용 가이드](integrations/omp/USAGE.md)를 참고하세요.
 
 ## 입력 드라이버와 다른 프로그램 격리
 
-기본 드라이버는 **기존 `cua-driver mcp`**입니다. nyatinorma가 소유하는 MCP 클라이언트와 무작위 고유 세션 이름을 사용합니다. 종료할 때 자기 세션과 클라이언트만 정리하며, 공용 데몬의 종료/재시작/업데이트/전역 설정 변경 도구는 호출할 수 없습니다. 다른 에이전트의 로그인·설정·설치본을 수정하지 않습니다.
+**독립 pi/CLI 실행의** 기본 드라이버는 `cua-driver mcp`입니다. 아래 Cua·macOS 브리지 설정은 이 경로에 해당하며, omp 통합은 omp `computer`를 사용합니다. 독립 실행은 자체 MCP 클라이언트와 고유 세션만 정리하고 공용 데몬의 종료·재시작·업데이트·전역 설정 변경은 하지 않습니다.
 
 macOS 캡처와 클릭은 cua-driver **0.9.0**에서 시험했습니다. 새 환경에서는 Cua 설치와 해당 앱의 macOS 권한 설정이 필요합니다. 일부 macOS iPad 앱은 백그라운드 클릭에 `cuaModifiers:["cmd"]`가 필요할 수 있습니다. 이 옵션은 호출 인자로만 전달하고 드라이버 전역 설정을 바꾸지 않으며 Windows에서는 보내지 않습니다.
 
@@ -103,7 +139,7 @@ macOS의 임의 앱 PID를 지정하는 브리지 경로와 `macos-legacy`의 �
 
 캡처는 지정 창 하나만, 입력은 `delivery_mode:"background"`만 사용합니다. foreground로 자동 전환하지 않습니다. 게임 창을 최소화하거나 닫지 마세요. 드라이버가 입력을 전달했다는 응답만으로 클릭 성공을 판단하지 않고, 실행 후 이미지를 다시 확인합니다. Cua가 반환하는 AX/UIA 텍스트는 모델에 전달하지 않습니다.
 
-**Windows:** TUI/상태 관리/이미지 처리와 Cua MCP 어댑터는 Windows를 대상으로 작성했습니다. Windows용 cua-driver 및 접근 가능한 Ollama 서버가 필요하며, Windows의 게임/에뮬레이터 창에 맞게 대상을 지정해야 합니다. 현재 실기 검증은 macOS이며 Windows 게임 입력은 아직 미검증입니다. 원격 Ollama 서버에 `ollamaUrl`로 연결할 수 있지만, 이 프로젝트가 서버의 네트워크 설정을 변경하지는 않습니다. [Cua Windows API](https://cua.ai/docs/reference/cua-driver/mcp-tools-windows)
+**Windows 독립 실행:** Windows용 cua-driver와 접근 가능한 모델 서버가 필요합니다. Cua 경로의 Windows 게임 입력은 아직 실기 미검증이며, 아래 omp 실기 결과와 구분합니다. 원격 Ollama 주소를 지정해도 서버의 네트워크 설정은 변경하지 않습니다. [Cua Windows API](https://cua.ai/docs/reference/cua-driver/mcp-tools-windows)
 
 별도 버전이 필요하면 `cuaDriverPath`로 실행 파일을 지정하는 구조입니다. 프로젝트는 Cua를 자동 설치·업데이트하지 않습니다. 자체 브리지 전체 기능은 `driver:"macos-legacy"`를 명시한 경우에만 사용합니다. 드래그만 필요하면 `dragDriver`를 설정하세요.
 
@@ -122,7 +158,7 @@ macOS에서는 MCP 세션은 별개지만 Cua 데몬은 기존 설치본을 공�
 ## THINK / SELECT
 
 - **THINK:** pi 일반 대화·이미지 도구 루프. 모델은 `ny_reasoning`으로 다음 계획 요청의 추론을 켜거나 끌 수 있고, 후보 정의 오류가 연속 두 번 나면 하네스도 추론을 켭니다. 이 설정은 현재 pi 세션에만 적용됩니다. 선택된 pi provider의 스트리밍으로 목표, 관측, 후보와 복구 계획을 만듭니다. Ollama 네이티브 연결도 선택할 수 있습니다.
-- **SELECT:** 확장의 짧은 루프. 현재 선택된 provider에 화면 이미지와 후보 설명을 보내고 추론을 끈 1토큰 `logprobs`를 사용합니다.
+- **SELECT:** 확장의 짧은 루프. 기본 경로는 현재 provider의 추론을 끈 1토큰 `logprobs`를 사용하며, 선택적 System One 경로는 typed-choice 판정 분포를 사용합니다. 두 경로 모두 같은 sleepwalk 실행기로 연결됩니다.
 - **ACT:** `ny_act({goal, until?, constraints?})`는 작은 목표를 수행합니다. `goal`만 필수이고, `ny_act({resume:continuationId})`로 중간 상태를 이어갑니다. 현재 화면에서 짧은 후보를 만들고, 적합한 저장 절차를 재사용할 수 있으며, 입력 뒤 결과를 확인합니다. 후보 생성은 planner 추론 설정을 변경하지 않습니다.
 - **드래그 sleepwalk:** `ny_scroll({goal:"현재 목록에서 요청한 항목을 찾는다",until:"해당 항목의 제목이 분명하게 보인다"})`도 ACT와 같은 실행기를 사용합니다. 드래그만 허용하며, SELECT로 이동·발견·거리 조정·종료를 판단합니다. 이동량은 큰 탐색과 작은 조정 두 단계입니다. 기본 호출당 80회, 최대 300회이며 시간 예산과 사용자 마감은 유지합니다. 큰 이동은 창 축 길이의 55%, 작은 이동은 8%부터 경로를 확인하고, 영역을 벗어나거나 경로 확인이 실패하면 더 짧은 후보를 확인합니다. 이는 손가락 이동 거리이며 실제 콘텐츠 이동량은 앱에 따라 다릅니다. 큰 탐색 드래그 후에는 0.2초 뒤 확인하고, 관성이 남아도 판독 가능하면 이어갑니다. 이동 때문에 판독·미세 조정이 어려울 때만 기다리며, 작은 조정 후에는 0.7초 대기를 유지합니다. 목표 발견 시 직전·최신 화면을 비교하여 잠깐 지나가는 항목을 완료로 오인하지 않도록 확인합니다. 모델 추론과 캡처 시간은 별도입니다. 매 스크롤마다 상위 모델로 돌아가지 않습니다. 호출 예산에 도달하면 `resume`으로 이어가며 드래그 전용 제한도 보존합니다. 기본 도구 `ny_scroll`은 목표·종료 조건을 받으며 좌표를 받지 않습니다. `ny_drag`는 `ny_tools`의 legacy 그룹에서 제공하는 별도 단발 도구로, 기존 `snapshotId`·좌표 인자를 받습니다. 클릭·화면 이동까지 필요한 목표는 `ny_act`를 사용합니다. 이번 연결은 실행 검증하지 않았습니다.
 - 후보 세트의 `purpose`는 이번 화면에서 할 일입니다. 예를 들어 전체 목표는 별 3개 클리어여도 지금 목표는 "전투 목록을 열어 별 수 확인"입니다. SELECT에는 두 목표를 함께 전달합니다.
@@ -141,9 +177,9 @@ macOS에서는 MCP 세션은 별개지만 Cua 데몬은 기존 설치본을 공�
 - 이미지 입력은 지정된 **게임 창**과 그 창의 crop/격자 이미지입니다. 바탕화면 전체를 보내지 않습니다. 이미지 옆에 관측 ID, 전체/확대 이미지 순서, 영역 좌표를 명시합니다. 작업 지침·도구 정의·대화 기록도 텍스트로 입력됩니다.
 - 불완전한 top-k와 낮은 선택 점수는 입력 근거가 아닙니다. 실행기는 드래그 결과와 목표를 현재 화면에서 판정하고, 범위 변경이나 미해결 판단이 필요할 때 THINK로 돌아갑니다.
 
-확률은 **보정되지 않은 토큰 점수**입니다. `selectMinMass`·`selectMinMargin`·템플릿 임계값은 초기 보수적 설정이며 실제 성공률을 뜻하지 않습니다. 모든 후보가 top-k에 없으면 실행하지 않습니다. 입력 prefill과 공유 Ollama의 대기 시간은 1토큰 선택으로 사라지지 않습니다.
+확률은 **보정되지 않은 모델 선택 점수**입니다. legacy 경로는 토큰 logprobs, System One 경로는 선택 분포를 사용합니다. `selectMinMass`·`selectMinMargin`·템플릿 임계값은 초기 보수적 설정이며 실제 성공률을 뜻하지 않습니다. 불완전한 후보 분포를 입력 근거로 쓰지 않습니다. 입력 prefill과 공유 서버의 대기 시간은 빠른 선택으로 사라지지 않습니다.
 
-공유 서버의 대기를 고려해 `ollamaTimeoutSeconds`는 기본 **600초(10분)**, SELECT 구간의 `maxRunSeconds`는 **900초(15분)**입니다. `nyatinorma.json`에서 변경한 뒤 TUI를 다시 열면 반영됩니다. 긴 요청 중에도 Escape로 취소할 수 있으며, 응답을 오래 기다린 경우에도 입력 직전에 화면과 창 좌표를 재검증합니다. 서버 오류의 자동 재시도는 꺼져 있어 실패가 보이면 원인을 확인하고 다시 요청합니다.
+공유 서버의 대기를 고려해 legacy `ollamaTimeoutSeconds`는 기본 **600초(10분)**, SELECT 구간의 `maxRunSeconds`는 **900초(15분)**입니다. System One 요청 시간 제한은 별도의 `decision.timeoutMs`입니다. `nyatinorma.json`에서 변경한 뒤 TUI를 다시 열면 반영됩니다. 긴 요청 중에도 Escape로 취소할 수 있으며, 응답을 오래 기다린 경우에도 입력 직전에 화면과 창 좌표를 재검증합니다. 동일 서버로의 무조건적인 재시도는 하지 않으며, System One 실패 시 기존 경로 전환 여부는 위 `fallback` 설정을 따릅니다.
 
 ## 작업과 개선
 
@@ -219,9 +255,10 @@ Cua 요청 제한은 `desktopTimeoutSeconds`로 설정하며 기본 180초입니
 
 ## 검증
 
-이번 변경의 범위와 실제 화면 검증은 [구조·설정·개인정보 점검](docs/architecture-and-privacy.md)을 참고하세요. Windows 실기와 장기 자율 주행은 아직 미검증입니다.
-
-임시 기록·스킬 계층·시즌 선택 수정은 [지식과 기록 검증](docs/knowledge-and-sessions.md)에 정리했습니다. 실행 중인 세션은 변경하지 않으며 새 코드는 다음 시작부터 적용합니다.
+- 타입 검사·전체 테스트 **126개**·omp 빌드 및 새 Eval 커널의 설치 번들 로딩을 확인했습니다.
+- Windows omp에서 가려진 테스트 창의 캡처·입력·대기와 포그라운드 창 유지, 중단·재개를 확인했습니다.
+- MuMu 게임 실기에서 `clef-flash:9b` 판정 39회와 두 판 승리를 확인했습니다. 직접 클릭 3회와 상위 모델의 결과 확인 보완이 필요했으므로 **완전 자율 등반 검증은 아닙니다**. 모델별 오판과 미검증 범위는 [omp 가이드](integrations/omp/USAGE.md#검증과-한계)에 정리했습니다.
+- 독립 실행의 [구조·설정·개인정보 점검](docs/architecture-and-privacy.md), [지식과 기록 검증](docs/knowledge-and-sessions.md)은 별도 기록입니다. 새 코드는 재시작 후 적용하며 장기 무개입 실행은 보장하지 않습니다.
 
 ```sh
 npm test

@@ -2,16 +2,21 @@
 import {normalizeContext,type Model,type Message} from '@earendil-works/pi-ai';
 import type {ModelRegistry} from '@earendil-works/pi-coding-agent';
 import {config} from './config.js';
-import {select,decodeDecision,selectionPrompt,selectionHistory,type SelectHistory} from './ollama.js';
+import {selectLegacyOllama,decodeDecision,selectionPrompt,selectionHistory,type SelectHistory} from './ollama.js';
+import {withDecisionBackend} from './decision-backend.js';
 
-type Choices=Parameters<typeof select>[1];
+type Choices=Parameters<typeof selectLegacyOllama>[1];
 // The active pi provider owns credentials, endpoint, compatibility and streaming.
 // Only the extra logprob request/response handling belongs to SELECT.
 export async function selectForModel(registry:ModelRegistry,model:Model<any>|undefined,state:string,choices:Choices,signal?:AbortSignal,image?:string,history:SelectHistory=[]){
+  const c=await config();
+  return withDecisionBackend(state,choices,()=>selectLegacyForModel(registry,model,state,choices,signal,image,history),signal,image,c.decision,history);
+}
+async function selectLegacyForModel(registry:ModelRegistry,model:Model<any>|undefined,state:string,choices:Choices,signal?:AbortSignal,image?:string,history:SelectHistory=[]){
   if(!model)throw new Error('먼저 /model에서 모델을 선택하세요.');
   if(model.api==='nyatinorma-native-ollama'){
     const auth=await registry.getApiKeyAndHeaders(model);if(!auth.ok)throw new Error(auth.error);
-    return select(state,choices,signal,image,{model:model.id,baseUrl:auth.baseUrl??model.baseUrl,headers:auth.headers},history);
+    return selectLegacyOllama(state,choices,signal,image,{model:model.id,baseUrl:auth.baseUrl??model.baseUrl,headers:auth.headers},history);
   }
   if(model.api!=='openai-completions')throw new Error('이 provider는 SELECT logprobs 경로가 지원되지 않습니다. 현재 모델의 THINK와 ny_drag는 사용할 수 있지만 ny_locate 클릭에는 지원되는 SELECT provider가 필요합니다. 다른 서버로 자동 전환하지 않습니다.');
   if(choices.length<2||choices.length>12)throw new Error('SELECT requires 2–12 choices including THINK.');

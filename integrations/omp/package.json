@@ -1,0 +1,14 @@
+{
+  "name": "nyatinorma-omp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OMP Eval adapter for Nyatinorma's shared sleepwalk runtime",
+  "main": "./dist/nyatinorma.js",
+  "exports": {".": "./dist/nyatinorma.js"},
+  "scripts": {"build": "bun build.ts"},
+  "dependencies": {"sharp": "0.35.4", "typebox": "1.3.27"},
+  "omp": {"extensions": ["./extension.ts"]},
+  "engines": {"node": ">=22.19.0"},
+  "license": "(MIT OR Apache-2.0)"
+}

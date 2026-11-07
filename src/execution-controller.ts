@@ -11,10 +11,11 @@ import {VisualMemory,type VisualMemoryData} from './visual-memory.js';
 import {crop,gridOverlay} from './vision.js';
 import {reservedExecutionIds,assertNoUnresolvedInput,loadContinuation,newContinuation,saveContinuation,type CandidateBatch,type Continuation,type ExecutionCandidate,type ExecutionInput,type ExecutionResult,type ExecutionStatus,type Evidence} from './execution-contract.js';
 import type {Snapshot,Candidate,Decision,Box} from './types.js';
+import {executionHost,executionSnapshot,withExecutionHost,type ExecutionHost} from './host-context.js';
 
 export type SupplierContext={dragOnly?:boolean;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';scope:string;snapshot:Snapshot;history:string[];signal:AbortSignal;remainingRebuilds:number;lastAction?:ExecutionCandidate;procedure?:CandidateBatch['procedure']};
 export type CandidateSupplier=(context:SupplierContext)=>Promise<CandidateBatch>;
-export type ExecutionOptions={signal?:AbortSignal;interrupted?:()=>boolean;onUpdate?:(s:string)=>void;refreshSupplier?:boolean;confirmDone?:number;transientRetries?:number;maxWaits?:number};
+export type ExecutionOptions={host?:ExecutionHost;signal?:AbortSignal;interrupted?:()=>boolean;onUpdate?:(s:string)=>void;refreshSupplier?:boolean;confirmDone?:number;transientRetries?:number;maxWaits?:number};
 export type ExecutionDeps=ActionDeps & {trace:typeof trace;sleep:typeof delay};
 
 class UserInstructionPending extends Error {constructor(){super('user_instruction_pending');}}
@@ -25,6 +26,7 @@ function validateBatch(batch:CandidateBatch){
   for(const a of batch.actions){
     if(!/^[a-z][a-z0-9_-]{0,31}$/.test(a.id)||reservedExecutionIds.has(a.id)||ids.has(a.id)||!['click','drag'].includes(a.kind)||!a.label?.trim()||!a.when?.trim()||!a.expectation?.trim())throw new Error('Invalid execution candidate');
     if(a.kind==='click'&&!a.target?.trim())throw new Error('Click candidate needs a target');
+    if(a.preparedAction&&(a.preparedAction.id!==a.id||a.preparedAction.kind!==a.kind))throw new Error('Prepared action must match its execution candidate ID and kind');
     if(a.drag?.amount&&!['small','medium','large'].includes(a.drag.amount))throw new Error('Invalid drag amount');
     if(a.kind==='drag'&&!a.preparedAction&&(!a.drag?.surface?.trim()||!['up','down','left','right'].includes(a.drag.direction)))throw new Error('Drag candidate needs a surface and direction');
     ids.add(a.id);
@@ -49,13 +51,14 @@ async function frame(s:Snapshot){return (await sharp(s.path).resize({width:1050,
 
 /** One input/observation state machine shared by adaptive, saved, and passive suppliers. */
 export async function runExecution(input:ExecutionInput,supplier:CandidateSupplier,work:WorkContract,options:ExecutionOptions={},overrides:Partial<ExecutionDeps>={}):Promise<ExecutionResult>{
+  if(options.host&&executionHost()!==options.host)return withExecutionHost(options.host,()=>runExecution(input,supplier,work,options,overrides));
   const c=await config(),d={...actionDefaults,trace,sleep:delay,...overrides};
   let maxActions=input.maxActions??(input.dragOnly?80:20);
   const maxRebuilds=input.maxRebuilds??6,maxSeconds=Math.min(input.maxSeconds??c.maxRunSeconds,c.maxRunSeconds);
   if(!Number.isInteger(maxActions)||maxActions<1||maxActions>300||!Number.isInteger(maxRebuilds)||maxRebuilds<1||maxRebuilds>12||!Number.isFinite(maxSeconds)||maxSeconds<1)throw new Error('Invalid execution budget');
   if(input.until&&input.doneWhen&&input.until!==input.doneWhen)throw new Error('until and doneWhen disagree');
   if(!input.resume&&!input.goal?.trim())throw new Error('Execution requires a goal');
-  const release=acquireInput();let j:Continuation;
+  const release=acquireInput(input.resume);let j:Continuation;
   try{
     const active=await loadContinuation();
     if(active?.lastInput.outcome==='unresolved'&&active.lastInput.delivery!=='not_sent'&&active.id!==input.resume)await assertNoUnresolvedInput();
@@ -96,6 +99,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
     const status=statusFor(reason);j.lastStatus=status;j.evidence=evidence;if(status==='done')j.phase='done';if(status==='stopped')j.phase='stopped';await persist();
     const result:ExecutionResult={reason,status,summary:summary(reason,j),goal:j.goal,actions:j.actions,rebuilds:j.rebuilds,selectCalls:j.selectCalls,elapsedMs:Date.now()-j.createdAt,history:j.history.slice(-8),visualMemory:memoryInfo,pendingOutcome:j.lastInput.outcome==='unresolved'?j.lastInput.expectation:undefined,snapshot:s,evidence,lastInput:j.lastInput,procedure:j.procedure,...(status==='yielded'||status==='needs_decision'?{continuationId:j.id,nextCall:{resume:j.id}}:{}),...(status==='needs_decision'?{question:reason==='input_outcome_unknown'?'Did the last input take effect? Resume to inspect its result.':reason==='input_no_effect_observed'?'The sent input showed no visible expected effect in two fresh observations. What new bounded action should be tried?':'Which bounded action or interpretation should be used next?'}:{}),...extra};
     await d.trace({event:'execution_end',reason,status,goal:j.goal,continuationId:j.id,snapshotId:s?.id,lastInput:j.lastInput});
+    if(status==='stopped'){result.continuationId=j.id;result.nextCall={resume:j.id};}
     return result;
   };
   const choose=async(prompt:string,choices:{id:string;label:string}[],image:string)=>{const v=await d.choose(prompt,choices,signal,image);j.selectCalls++;check();await persist();return v;};
@@ -133,7 +137,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
     for(let i=0;i<(options.confirmDone??1);i++){
       const previous=s,afterScroll=j.lastInput.kind==='drag'&&j.lastInput.outcome==='observed';
       await observe();
-      const before=j.lastInput.outcome==='observed'&&j.lastInput.beforeSnapshotId?await import('./store.js').then(m=>m.snapshot(j.lastInput.beforeSnapshotId!)).catch(()=>undefined):undefined;
+      const before=j.lastInput.outcome==='observed'&&j.lastInput.beforeSnapshotId?await executionSnapshot(j.lastInput.beforeSnapshotId):undefined;
       const image=afterScroll&&previous?await comparisonImage(previous,s!,[],j.lastAction?.drag?.region??j.batch?.progressRegion):(await gridOverlay(Buffer.from(await frame(s!),'base64'))).toString('base64');
       const verdict=await chooseWithDetail(`${scopeOf(j,work)}\nCompletion check for: ${until}. Judge every required condition of the requested final state, not merely progress toward it. ${afterScroll?'Compare the prior post-drag view with the fresh CURRENT view. Confirm the target remains readable and sufficiently settled for the requested final state, rather than only passing through it during inertia. A presence-only search may finish when identity is clear and the item remains in view; precise alignment requires its position to be stable enough. Decorative animation need not stop. Judge spatial conditions within the current window, not the combined image.':'The image has a 4×4 reference grid: rows A/B are the upper half, C/D the lower half; columns 1/2 are the left half, 3/4 the right half. Check spatial conditions against these boundaries.'} Fully inside requires the entire target within the requested region; partial overlap is insufficient. Closing, dismissing, removing or leaving a target requires its ABSENCE, not its continued visibility. A successor screen mentioning similar words is not necessarily the original target. When present, the full-window grid belongs to the CURRENT screen. Prior input information is history, not evidence that the goal is now satisfied. Last input: ${j.lastAction?.label??'none'}; expected effect (a hypothesis, not proof): ${j.lastInput.expectation??'none'}. A changed screen alone is insufficient, but do not require the removed target to remain visible.`,[{id:'yes',label:'YES: visual evidence satisfies the termination condition, including any required absence'},{id:'no',label:'NO: at least one required condition is unmet, even if progress occurred'},{id:'uncertain',label:'UNCERTAIN: image cannot establish the final state'}],image,j.batch?.progressRegion??j.lastAction?.drag?.region??j.lastAction?.drag?.view,afterScroll?previous:before);
       if(!confident(verdict,c)||verdict.choice!=='yes')return false;
@@ -143,7 +147,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
   };
   try{
     if(j.phase==='done'){
-      if(j.lastSnapshotId)s=await import('./store.js').then(m=>m.snapshot(j.lastSnapshotId)).catch(()=>undefined);
+      if(j.lastSnapshotId)s=await executionSnapshot(j.lastSnapshotId);
       return await finish('local_goal_observed');
     }
     if(j.phase==='stopped'){
@@ -161,7 +165,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       // A prepared dispatch may have reached the OS before interruption. Resume
       // with observation only; no new input choices are shown until resolved.
       if(j.lastInput.outcome==='unresolved'&&(j.phase==='unknown'||j.lastInput.delivery==='unknown')){
-        const before=j.lastInput.beforeSnapshotId?await import('./store.js').then(m=>m.snapshot(j.lastInput.beforeSnapshotId!)).catch(()=>undefined):undefined;
+        const before=j.lastInput.beforeSnapshotId?await executionSnapshot(j.lastInput.beforeSnapshotId):undefined;
         const sameWindow=(old:Snapshot,current:Snapshot)=>old.window.pid===current.window.pid&&old.window.windowId===current.window.windowId;
         if(before&&!sameWindow(before,s!))return await finish('input_outcome_unknown',{summary:'The window changed after the prior input. Its outcome cannot be inferred from the current window.'});
         const canCheckNoEffect=j.lastInput.delivery==='sent'&&j.lastInput.kind==='click'&&!!before&&sameWindow(before,s!);
@@ -187,7 +191,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       }
       if(j.phase==='after_drag'&&j.lastAction){
         const before=j.lastInput.beforeSnapshotId;
-        const old=before?await import('./store.js').then(m=>m.snapshot(before)).catch(()=>undefined):undefined;
+        const old=before?await executionSnapshot(before):undefined;
         const a=j.lastAction;
         const image=await memory.scrollComparison(s!,old,latestSeen?.info.revisited?latestSeen.reference:undefined);
         const adaptive=j.mode==='act'&&!j.procedure&&!a.preparedAction;
@@ -311,7 +315,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
     }
     return await finish('decision_budget');
   }catch(error){
-    const reason=error instanceof CuaTimeoutError&&['click','drag'].includes(error.operation)?'input_outcome_unknown':error instanceof DeadlineReached?'deadline_reached':error instanceof UserInstructionPending?'user_instruction_pending':timeout.aborted&&!options.signal?.aborted?(Date.now()>=j.deadlineAt?'deadline_reached':'time_budget'):signal.aborted?'cancelled':'error';
+    const reason=error instanceof CuaTimeoutError&&['click','drag'].includes(error.operation)?'input_outcome_unknown':error instanceof DeadlineReached?'deadline_reached':error instanceof UserInstructionPending?'user_instruction_pending':timeout.aborted&&!options.signal?.aborted?(Date.now()>=j.deadlineAt?'deadline_reached':'time_budget'):signal.aborted?'cancelled':j.lastInput.delivery==='unknown'&&j.lastInput.outcome==='unresolved'?'input_outcome_unknown':'error';
     return await finish(reason,{error:error instanceof Error?error.message:String(error)});
   }finally{release();}
 }

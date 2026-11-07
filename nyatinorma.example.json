@@ -1,6 +1,14 @@
 {
   "ollamaUrl": "http://127.0.0.1:11434",
   "model": "your-vision-model:tag",
+  "decision": {
+    "mode": "legacy",
+    "url": "http://127.0.0.1:11434",
+    "model": "d3:4b",
+    "wire": "ollama",
+    "timeoutMs": 30000,
+    "fallback": true
+  },
   "contextWindow": 32768,
   "maxTokens": 4096,
   "reasoning": true,
