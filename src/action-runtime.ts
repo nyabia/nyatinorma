@@ -11,6 +11,7 @@ import {CuaSessionRestoredError} from './cua-transport.js';
 import {InputNotSentError} from './input-error.js';
 import {trace} from './store.js';
 import type {Box,Candidate,Decision,Snapshot} from './types.js';
+import type {ProjectedActPoint} from './act-points.js';
 
 export const whole:Box={x:0,y:0,width:1,height:1};
 export type ActionDeps={capture:typeof capture;execute:typeof execute;choose:typeof select;check:()=>void;trace:typeof trace};
@@ -61,7 +62,7 @@ export async function revalidateObservation(source:Snapshot,options:{signal?:Abo
 }
 export type GroundedClick={target:string;source:Snapshot;box:Box};
 export type {GroundedDrag,DragSurface,DragAmount} from './locate-drag.js';
-export type ActionRequest={action:Candidate;target?:string;constraints?:string;expectation?:string;regions?:Box[];grounded?:GroundedClick;drag?:DragSurface;groundedDrag?:GroundedDrag;beforeDispatch?:(action:Candidate,snapshot:Snapshot)=>Promise<void>;afterDispatch?:(input:unknown)=>Promise<void>;onNotDispatched?:(reason:string)=>Promise<void>};
+export type ActionRequest={action:Candidate;registeredPoint?:ProjectedActPoint;target?:string;constraints?:string;expectation?:string;regions?:Box[];grounded?:GroundedClick;drag?:DragSurface;groundedDrag?:GroundedDrag;beforeDispatch?:(action:Candidate,snapshot:Snapshot)=>Promise<void>;afterDispatch?:(input:unknown)=>Promise<void>;onNotDispatched?:(reason:string)=>Promise<void>};
 /** Caller owns the input lock. Both adaptive ACT and saved flows use this path. */
 export async function performAction(source:Snapshot,request:ActionRequest,signal?:AbortSignal,overrides:Partial<ActionDeps>={}){
   const d={...actionDefaults,...overrides};let action={...request.action},grounded=request.grounded,groundedDrag=request.groundedDrag,current=source;
@@ -83,6 +84,14 @@ export async function performAction(source:Snapshot,request:ActionRequest,signal
     return input;
   };
   check();
+  if(action.kind==='click'&&request.registeredPoint){
+    // 새 SELECT에서 등록 screen과 description의 일치 및 컨트롤 사용 가능 여부를
+    // 확인한 바로 그 표식을 보낸다. 재캡처·위치 추론·추가 의미 검증·자동 재전송은 하지 않는다.
+    const point=request.registeredPoint.point;
+    action={...action,point:undefined,box:pointBox(point,source.width,source.height),regionPath:undefined,gridPoint:undefined};
+    const input=await dispatchPrepared(action,source);
+    return {performed:true,reason:'input_dispatched',snapshot:source,action,input,selectCalls};
+  }
   if(action.kind==='drag'){
     const surface=(request.drag?.surface??request.target??action.target??action.label).trim();
     if(!surface)throw new Error('Drag requires a visual surface description');

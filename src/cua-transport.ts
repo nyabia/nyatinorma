@@ -13,7 +13,7 @@ export class CuaTransport {
   readonly session=`nyatinorma-${process.pid}-${randomUUID().slice(0,8)}`;
   private child?:ChildProcessWithoutNullStreams;
   private pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:NodeJS.Timeout}>();
-  private serial=0;private ready?:Promise<void>;private named=false;
+  private serial=0;private ready?:Promise<void>;private named=false;private motionConfigured=false;
   constructor(private executable:string,private args=['mcp'],private timeoutMs=180_000){}
   private async connect(){
     if(this.ready)return this.ready;
@@ -21,7 +21,7 @@ export class CuaTransport {
       const child=spawn(this.executable,this.args,{stdio:'pipe'});this.child=child;let buffer='',stderr='';
       child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-2000);});
       const fail=(error:Error)=>{for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(error);}this.pending.clear();};
-      child.on('error',fail);child.on('exit',()=>{fail(new Error(`Cua MCP connection ended: ${stderr}`));this.ready=undefined;this.child=undefined;this.named=false;});
+      child.on('error',fail);child.on('exit',()=>{fail(new Error(`Cua MCP connection ended: ${stderr}`));this.ready=undefined;this.child=undefined;this.named=false;this.motionConfigured=false;});
       child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{
         buffer+=chunk;let end;
         while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);if(!line.trim())continue;
@@ -46,20 +46,30 @@ export class CuaTransport {
     const message=(result.content??[]).filter((v:any)=>v.type==='text').map((v:any)=>v.text).join('\n');
     return message.includes(`session '${this.session}' has ended; tool call '${name}' was rejected`);
   }
+  private async prepareSession(signal?:AbortSignal){
+    if(!this.named){
+      await this.call('start_session',{session:this.session,capture_scope:'window'},false,signal);
+      this.named=true;
+    }
+    if(!this.motionConfigured){
+      // Cua의 0ms는 즉시 이동이 아니라 거리 기반 애니메이션이다. 실제 드래그 시간은 별도로 유지한다.
+      await this.call('set_agent_cursor_motion',{session:this.session,glide_duration_ms:1,dwell_after_click_ms:0,spring:1,arc_size:0},false,signal);
+      this.motionConfigured=true;
+    }
+  }
   async call(name:string,args:Record<string,unknown>={},withSession=false,signal?:AbortSignal):Promise<any>{
-    const allowed=['list_windows','list_apps','check_permissions','get_cursor_position','get_window_state','click','drag','start_session','end_session'];
+    const allowed=['list_windows','list_apps','check_permissions','get_cursor_position','get_window_state','click','drag','start_session','end_session','set_agent_cursor_motion'];
     if(!allowed.includes(name))throw new Error(`Cua operation not allowed by nyatinorma: ${name}`);
     signal?.throwIfAborted();await this.connect();signal?.throwIfAborted();
-    if(withSession&&!this.named){await this.call('start_session',{session:this.session,capture_scope:'window'});this.named=true;}
+    if(withSession)await this.prepareSession(signal);
     signal?.throwIfAborted();
     const params={name,arguments:{...args,...(withSession?{session:this.session}:{})}};
     let result=await this.request('tools/call',params);
     if(withSession&&this.endedSession(result,name)){
       // The MCP proxy can remain alive after the driver's named session expires.
       // Revive only our session. Never restart or reconfigure the shared daemon.
-      this.named=false;signal?.throwIfAborted();
-      await this.call('start_session',{session:this.session,capture_scope:'window'},false,signal);
-      this.named=true;signal?.throwIfAborted();
+      this.named=false;this.motionConfigured=false;signal?.throwIfAborted();
+      await this.prepareSession(signal);signal?.throwIfAborted();
       // Reacquire an image after recovery; do not replay input based on an old one.
       if(name!=='get_window_state')throw new CuaSessionRestoredError();
       result=await this.request('tools/call',params);
@@ -77,7 +87,7 @@ export class CuaTransport {
     if(!this.child)return;
     try{if(this.named)await this.call('end_session',{session:this.session});}finally{
       // SIGTERM addresses only the proxy process spawned above, never CuaDriver.app.
-      this.named=false;this.child?.stdin.end();this.child?.kill('SIGTERM');
+      this.named=false;this.motionConfigured=false;this.child?.stdin.end();this.child?.kill('SIGTERM');
     }
   }
 }

@@ -43,7 +43,8 @@ export async function capture(signal?:AbortSignal):Promise<Snapshot> {
   const result=await native({action:'capture',path:resolve(dataDir,'captures',id+'.png')},signal);
   if(result.recognition!=='vision-only')throw new Error('OCR-free capture requires Nyatinorma Bridge protocol 4. Rebuild and restart the bridge.');
   const normalized=await normalizeCapture(result.path,result.window.frame);
-  const s:Snapshot={id,at:Date.now(),path:result.path,window:result.window,ocr:[],...normalized};
+  const target=currentTarget();
+  const s:Snapshot={id,at:Date.now(),path:result.path,window:result.window,ocr:[],...normalized,...(target?{knowledgeAppId:target.knowledgeAppId}:{})};
   await saveJSON(resolve(dataDir,'captures',id+'.json'),s);
   await writeFile(resolve(dataDir,'latest.txt'),id); return s;
 }

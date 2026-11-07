@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {dataDir,saveJSON,type Config} from './config.js';
 export function mergeSettings(previous:Record<string,any>,c:Config):Record<string,any>{
-  return {...(c.model?{defaultProvider:'nyatinorma-ollama',defaultModel:c.model}:{}),defaultThinkingLevel:'medium',quietStartup:true,enableSkillCommands:false,
+  return {...(c.model?{defaultProvider:'nyatinorma-ollama',defaultModel:c.model}:{}),defaultThinkingLevel:'medium',quietStartup:true,enableSkillCommands:true,
     compaction:{enabled:true,reserveTokens:8192,keepRecentTokens:12000},retry:{enabled:false,maxRetries:0},...previous};
 }
 export async function initializePiSettings(c:Config){

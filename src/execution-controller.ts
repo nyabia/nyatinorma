@@ -9,16 +9,18 @@ import {DeadlineReached} from './time.js';
 import {actionDefaults,comparisonImage,confident,performAction,whole,type ActionDeps,type GroundedClick,type GroundedDrag} from './action-runtime.js';
 import {VisualMemory,type VisualMemoryData} from './visual-memory.js';
 import {crop,gridOverlay} from './vision.js';
-import {reservedExecutionIds,assertNoUnresolvedInput,loadContinuation,newContinuation,saveContinuation,type CandidateBatch,type Continuation,type ExecutionCandidate,type ExecutionInput,type ExecutionResult,type ExecutionStatus,type Evidence} from './execution-contract.js';
+import {registeredClickCandidate,reservedExecutionIds,assertNoUnresolvedInput,loadContinuation,newContinuation,saveContinuation,type CandidateBatch,type Continuation,type ExecutionCandidate,type ExecutionInput,type ExecutionResult,type ExecutionStatus,type Evidence} from './execution-contract.js';
 import type {Snapshot,Candidate,Decision,Box} from './types.js';
 import {executionHost,executionSnapshot,withExecutionHost,type ExecutionHost} from './host-context.js';
+import {listActPoints,projectActPoint,renderActPointOverlay,type ProjectedActPoint} from './act-points.js';
 
-export type SupplierContext={dragOnly?:boolean;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';scope:string;snapshot:Snapshot;history:string[];signal:AbortSignal;remainingRebuilds:number;lastAction?:ExecutionCandidate;procedure?:CandidateBatch['procedure']};
+export type SupplierContext={grid_navigation:boolean;dragOnly?:boolean;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';scope:string;snapshot:Snapshot;history:string[];signal:AbortSignal;remainingRebuilds:number;lastAction?:ExecutionCandidate;procedure?:CandidateBatch['procedure']};
 export type CandidateSupplier=(context:SupplierContext)=>Promise<CandidateBatch>;
 export type ExecutionOptions={host?:ExecutionHost;signal?:AbortSignal;interrupted?:()=>boolean;onUpdate?:(s:string)=>void;refreshSupplier?:boolean;confirmDone?:number;transientRetries?:number;maxWaits?:number};
 export type ExecutionDeps=ActionDeps & {trace:typeof trace;sleep:typeof delay};
 
 class UserInstructionPending extends Error {constructor(){super('user_instruction_pending');}}
+class RegisteredPointChanged extends Error {constructor(){super('registered_point_changed');}}
 
 function validateBatch(batch:CandidateBatch){
   if(!batch||typeof batch.description!=='string'||!Array.isArray(batch.actions)||batch.actions.length>6)throw new Error('Invalid candidate batch');
@@ -26,6 +28,7 @@ function validateBatch(batch:CandidateBatch){
   for(const a of batch.actions){
     if(!/^[a-z][a-z0-9_-]{0,31}$/.test(a.id)||reservedExecutionIds.has(a.id)||ids.has(a.id)||!['click','drag'].includes(a.kind)||!a.label?.trim()||!a.when?.trim()||!a.expectation?.trim())throw new Error('Invalid execution candidate');
     if(a.kind==='click'&&!a.target?.trim())throw new Error('Click candidate needs a target');
+    if(a.registeredPoint&&(a.kind!=='click'||a.id!==a.registeredPoint.entry.id))throw new Error('Registered point must match its click candidate ID');
     if(a.preparedAction&&(a.preparedAction.id!==a.id||a.preparedAction.kind!==a.kind))throw new Error('Prepared action must match its execution candidate ID and kind');
     if(a.drag?.amount&&!['small','medium','large'].includes(a.drag.amount))throw new Error('Invalid drag amount');
     if(a.kind==='drag'&&!a.preparedAction&&(!a.drag?.surface?.trim()||!['up','down','left','right'].includes(a.drag.direction)))throw new Error('Drag candidate needs a surface and direction');
@@ -63,10 +66,12 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
     const active=await loadContinuation();
     if(active?.lastInput.outcome==='unresolved'&&active.lastInput.delivery!=='not_sent'&&active.id!==input.resume)await assertNoUnresolvedInput();
     if(!input.resume)await assertNoUnresolvedInput();
-    const selected=input.resume?await loadContinuation(input.resume):newContinuation({revision:work.revision,goal:input.goal!,until:input.until?.trim()||input.doneWhen?.trim()||input.goal!,constraints:input.constraints??[],mode:input.mode??'act',dragOnly:input.dragOnly});
+    const selected=input.resume?await loadContinuation(input.resume):newContinuation({revision:work.revision,goal:input.goal!,until:input.until?.trim()||input.doneWhen?.trim()||input.goal!,constraints:input.constraints??[],mode:input.mode??'act',dragOnly:input.dragOnly,grid_navigation:input.grid_navigation});
     if(!selected)throw new Error('Unknown continuation');
     if(input.resume&&input.dragOnly&&!selected.dragOnly)throw new Error('This continuation was not started as drag-only; resume it with ny_act.');
     j=selected;
+    j.grid_navigation??=false;
+    if(input.resume&&input.grid_navigation!==undefined)j.pendingGridNavigation=input.grid_navigation;
     if(j.dragOnly&&input.maxActions===undefined)maxActions=80;
     if(!j.dragOnly&&maxActions>100)throw new Error('Non-scroll execution supports at most 100 actions per call.');
     if(input.resume){
@@ -95,7 +100,18 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
   const check=()=>{signal.throwIfAborted();d.check();if(options.interrupted?.())throw new UserInstructionPending();};
   const evidence:Evidence[]=[...(j.evidence??[])];
   const persist=async()=>{j.lastSnapshotId=s?.id;await saveContinuation(j);};
+  const applyGridMode=async()=>{
+    if(j.pendingGridNavigation===undefined||j.lastInput.outcome==='unresolved')return;
+    const next=j.pendingGridNavigation;j.pendingGridNavigation=undefined;
+    if(next!==j.grid_navigation){
+      j.grid_navigation=next;j.batch=undefined;j.procedure=undefined;repeatAction=undefined;
+      grounded.clear();groundedDrags.clear();if(j.phase==='done')j.phase='select';
+      j.history.push(`클릭 탐색 모드 변경: grid_navigation=${next}. 이전 후보를 폐기하고 현재 화면에서 다시 생성한다.`);
+    }
+    await persist();
+  };
   const finish=async(reason:string,extra:Partial<ExecutionResult>={}):Promise<ExecutionResult>=>{
+    await applyGridMode();
     const status=statusFor(reason);j.lastStatus=status;j.evidence=evidence;if(status==='done')j.phase='done';if(status==='stopped')j.phase='stopped';await persist();
     const result:ExecutionResult={reason,status,summary:summary(reason,j),goal:j.goal,actions:j.actions,rebuilds:j.rebuilds,selectCalls:j.selectCalls,elapsedMs:Date.now()-j.createdAt,history:j.history.slice(-8),visualMemory:memoryInfo,pendingOutcome:j.lastInput.outcome==='unresolved'?j.lastInput.expectation:undefined,snapshot:s,evidence,lastInput:j.lastInput,procedure:j.procedure,...(status==='yielded'||status==='needs_decision'?{continuationId:j.id,nextCall:{resume:j.id}}:{}),...(status==='needs_decision'?{question:reason==='input_outcome_unknown'?'Did the last input take effect? Resume to inspect its result.':reason==='input_no_effect_observed'?'The sent input showed no visible expected effect in two fresh observations. What new bounded action should be tried?':'Which bounded action or interpretation should be used next?'}:{}),...extra};
     await d.trace({event:'execution_end',reason,status,goal:j.goal,continuationId:j.id,snapshotId:s?.id,lastInput:j.lastInput});
@@ -113,6 +129,9 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       const decision=await choose(`${prompt}\nThe broad next-step selection was ambiguous. Resolve these two competing interpretations using the SAME visual evidence. Neither is assumed correct; choose UNCLEAR if neither is supported.`,[...shortlist,{id:'unclear',label:'UNCLEAR: neither interpretation is established'}],evidenceImage);
       await d.trace({event:'selection_refined',continuationId:j.id,choices:shortlist.map(v=>v.id),decision});return decision;
     };
+    // 기본 ACT는 표식이 포함된 동일한 증거만 재검토한다. 불확실성을
+    // 새 영역 탐색이나 위치 추론으로 우회하지 않는다.
+    if(j.mode==='act'&&!j.dragOnly&&!j.grid_navigation)return refine(first,image);
     let view=roi;
     if(!view||view.width>=.98&&view.height>=.98){
       const names=['upper left','upper middle','upper right','middle left','center','middle right','lower left','lower middle','lower right'];
@@ -138,14 +157,16 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       const previous=s,afterScroll=j.lastInput.kind==='drag'&&j.lastInput.outcome==='observed';
       await observe();
       const before=j.lastInput.outcome==='observed'&&j.lastInput.beforeSnapshotId?await executionSnapshot(j.lastInput.beforeSnapshotId):undefined;
-      const image=afterScroll&&previous?await comparisonImage(previous,s!,[],j.lastAction?.drag?.region??j.batch?.progressRegion):(await gridOverlay(Buffer.from(await frame(s!),'base64'))).toString('base64');
-      const verdict=await chooseWithDetail(`${scopeOf(j,work)}\nCompletion check for: ${until}. Judge every required condition of the requested final state, not merely progress toward it. ${afterScroll?'Compare the prior post-drag view with the fresh CURRENT view. Confirm the target remains readable and sufficiently settled for the requested final state, rather than only passing through it during inertia. A presence-only search may finish when identity is clear and the item remains in view; precise alignment requires its position to be stable enough. Decorative animation need not stop. Judge spatial conditions within the current window, not the combined image.':'The image has a 4×4 reference grid: rows A/B are the upper half, C/D the lower half; columns 1/2 are the left half, 3/4 the right half. Check spatial conditions against these boundaries.'} Fully inside requires the entire target within the requested region; partial overlap is insufficient. Closing, dismissing, removing or leaving a target requires its ABSENCE, not its continued visibility. A successor screen mentioning similar words is not necessarily the original target. When present, the full-window grid belongs to the CURRENT screen. Prior input information is history, not evidence that the goal is now satisfied. Last input: ${j.lastAction?.label??'none'}; expected effect (a hypothesis, not proof): ${j.lastInput.expectation??'none'}. A changed screen alone is insufficient, but do not require the removed target to remain visible.`,[{id:'yes',label:'YES: visual evidence satisfies the termination condition, including any required absence'},{id:'no',label:'NO: at least one required condition is unmet, even if progress occurred'},{id:'uncertain',label:'UNCERTAIN: image cannot establish the final state'}],image,j.batch?.progressRegion??j.lastAction?.drag?.region??j.lastAction?.drag?.view,afterScroll?previous:before);
+      const referenceGrid=j.grid_navigation===true||j.dragOnly===true;
+      const image=afterScroll&&previous?await comparisonImage(previous,s!,[],j.lastAction?.drag?.region??j.batch?.progressRegion):referenceGrid?(await gridOverlay(Buffer.from(await frame(s!),'base64'))).toString('base64'):await frame(s!);
+      const verdict=await chooseWithDetail(`${scopeOf(j,work)}\nCompletion check for: ${until}. Judge every required condition of the requested final state, not merely progress toward it. ${afterScroll?'Compare the prior post-drag view with the fresh CURRENT view. Confirm the target remains readable and sufficiently settled for the requested final state, rather than only passing through it during inertia. A presence-only search may finish when identity is clear and the item remains in view; precise alignment requires its position to be stable enough. Decorative animation need not stop. Judge spatial conditions within the current window, not the combined image.':referenceGrid?'The image has a 4×4 reference grid: rows A/B are the upper half, C/D the lower half; columns 1/2 are the left half, 3/4 the right half. Check spatial conditions against these boundaries.':'Judge spatial conditions directly within the current full-window image.'} Fully inside requires the entire target within the requested region; partial overlap is insufficient. Closing, dismissing, removing or leaving a target requires its ABSENCE, not its continued visibility. A successor screen mentioning similar words is not necessarily the original target. When present, the full-window grid belongs to the CURRENT screen. Prior input information is history, not evidence that the goal is now satisfied. Last input: ${j.lastAction?.label??'none'}; expected effect (a hypothesis, not proof): ${j.lastInput.expectation??'none'}. A changed screen alone is insufficient, but do not require the removed target to remain visible.`,[{id:'yes',label:'YES: visual evidence satisfies the termination condition, including any required absence'},{id:'no',label:'NO: at least one required condition is unmet, even if progress occurred'},{id:'uncertain',label:'UNCERTAIN: image cannot establish the final state'}],image,j.batch?.progressRegion??j.lastAction?.drag?.region??j.lastAction?.drag?.view,afterScroll?previous:before);
       if(!confident(verdict,c)||verdict.choice!=='yes')return false;
       evidence.push({claim:until,snapshotId:s!.id});
     }
     return true;
   };
   try{
+    await applyGridMode();
     if(j.phase==='done'){
       if(j.lastSnapshotId)s=await executionSnapshot(j.lastSnapshotId);
       return await finish('local_goal_observed');
@@ -238,14 +259,15 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
         if(!confident(v,c)||v.choice!=='yes'){j.phase='unknown';await persist();return await finish('outcome_unconfirmed');}
         const until=j.mode==='flow'?(j.batch?.until??j.until):j.until;j.lastInput={...j.lastInput,outcome:'observed',afterSnapshotId:s!.id};j.phase='select';j.history.push(`${a.target}: expected result observed at ${s!.id}`);j.batch=undefined;await persist();if(await confirmDone(until))return await finish('local_goal_observed');continue;
       }
+      await applyGridMode();
       if(!j.batch||options.refreshSupplier||j.procedure){
         const generated=j.mode==='act'&&!j.procedure;
         if(generated&&callRebuilds>=maxRebuilds)return await finish('candidate_budget');
         options.onUpdate?.(`Candidate selection ${callRebuilds+1}/${maxRebuilds}`);
-        const supplied=await supplier({dragOnly:j.dragOnly,goal:j.goal,until:j.until,constraints:j.constraints,mode:j.mode,scope,snapshot:s!,history:j.history.slice(-8),signal,remainingRebuilds:maxRebuilds-callRebuilds,lastAction:j.lastAction,procedure:j.procedure});check();
+        const supplied=await supplier({grid_navigation:j.grid_navigation??false,dragOnly:j.dragOnly,goal:j.goal,until:j.until,constraints:j.constraints,mode:j.mode,scope,snapshot:s!,history:j.history.slice(-8),signal,remainingRebuilds:maxRebuilds-callRebuilds,lastAction:j.lastAction,procedure:j.procedure});check();
         const next=j.mode==='wait'?{...supplied,actions:[]}:j.dragOnly?{...supplied,actions:supplied.actions.filter(a=>a.kind==='drag')}:supplied;validateBatch(next);
         if(generated){const used=Math.max(1,next.generationAttempts??1);j.rebuilds+=used;callRebuilds+=used;await persist();}
-        if(next.stopReason)return await finish(next.stopReason);
+        if(next.stopReason)return await finish(next.stopReason,next.stopReason==='candidates_needed'?{summary:next.description,question:next.description}:{});
         j.batch=next;j.procedure=next.procedure;await persist();
         // A queued supplier may have inspected an old screen. SELECT always sees
         // a fresh one, and the action runtime checks again before dispatch.
@@ -253,6 +275,20 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       }
       const batch=j.batch!;
       if(j.dragOnly)batch.actions=batch.actions.filter(a=>a.kind==='drag').map(a=>a.drag?{...a,drag:{...a.drag,amount:a.drag.amount==='small'?'small':'large'}}:a);
+      // 공급자가 본 화면은 폐기 가능하다. SELECT가 실제로 볼 현재 캡처에서
+      // 모든 등록점을 다시 투영하고 한 번 샘플링한 표식을 입력까지 유지한다.
+      const host=executionHost();
+      const entries=j.mode==='act'&&(!host||host.actPointDirectory)?await listActPoints(s!):[];
+      const projected=entries.map(entry=>projectActPoint(entry,s!)).filter((point):point is ProjectedActPoint=>point!==undefined);
+      batch.actions=batch.actions.flatMap(a=>{
+        if(j.mode==='act'&&!j.grid_navigation&&!j.dragOnly&&a.kind!=='click')return [];
+        if(a.kind!=='click'||j.mode!=='act'&&!a.registeredPoint)return [a];
+        const point=projected.find(point=>point.entry.id===(a.registeredPoint?.entry.id??a.id));
+        if(point)return [registeredClickCandidate(point,j.goal,j.until)];
+        if(a.registeredPoint||j.mode==='act'&&!j.grid_navigation)return [];
+        return [a];
+      });
+      if(j.mode==='act'&&!j.dragOnly&&!j.grid_navigation&&!batch.actions.length&&!projected.length)return await finish('candidates_needed',{question:'현재 화면에 선택 가능한 등록 클릭 후보가 없습니다. ny_locate로 좌표를 찾고 ny_act_point_add로 등록하거나, 사용자가 허용한 그리드 탐색에 grid_navigation:true를 지정하세요.'});
       const until=j.mode==='flow'?(batch.until??j.until):j.until;
       if(batch.progressRegion&&JSON.stringify(batch.progressRegion)!==JSON.stringify(region)){
         region=batch.progressRegion;memory=new VisualMemory(region,40);latestSeen=await memory.observe(s!);memoryInfo=latestSeen.info;j.scan={region,data:memory.serialize()};await persist();
@@ -261,7 +297,8 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       const seen=latestSeen??await memory.observe(s!);memoryInfo=seen.info;j.scan={region,data:memory.serialize()};
       const choices=[...(callActions<maxActions&&j.mode!=='wait'?batch.actions.map(a=>({id:a.id,label:`${a.kind}: ${inputLabel(a)} — ${a.when}`})):[]),{id:'done',label:`DONE: ${until} visibly true`},{id:'wait',label:'WAIT: loading or automatic progress'},{id:'rebuild',label:'REBUILD: candidates do not match current screen'},{id:'stop',label:'STOP: scope or blocker needs parent decision'}];
       if(repeatAction&&callActions>=maxActions)return await finish('action_budget');
-      const v=repeatAction?{choice:repeatAction.id,legalMass:1,margin:1,truncated:false} as Decision:await chooseWithDetail(`${scope}\nCurrent state: ${batch.description}. Current completion condition: ${until}. Recent execution: ${j.history.slice(-8).join('; ')||'none'}. Revisited content is a hint, not proof of an endpoint. Choose only a visible candidate whose condition holds now.`,choices,await memory.comparison(s!,seen.info.revisited?seen.reference:undefined),batch.progressRegion);
+      const selectionImage=projected.length?await renderActPointOverlay(s!,projected):await memory.comparison(s!,seen.info.revisited?seen.reference:undefined);
+      const v=repeatAction?{choice:repeatAction.id,legalMass:1,margin:1,truncated:false} as Decision:await chooseWithDetail(`${scope}\nCurrent state: ${batch.description}. Current completion condition: ${until}. Recent execution: ${j.history.slice(-8).join('; ')||'none'}. Revisited content is a hint, not proof of an endpoint. Choose only a visible candidate whose condition holds now. 등록 클릭을 선택하면 현재 화면의 해당 ID 상자와 실제 클릭 표식의 바로 그 점에 한 번 입력한다. 현재 화면·대화상자 종류가 등록 screen과 일치하고 표식의 컨트롤 위치·역할·직접적인 UI 동작이 등록 description과 일치하는지 확인한다. 그 점이 올바른 컨트롤 안에 있고 가려지지 않았으며 활성화되어 입력을 받을 수 있을 때만 승인한다. 화면이나 컨트롤의 정체성·사용 가능 여부가 불명확하면 선택하지 않는다. 등록 설명은 작업 전략이나 성공 조건이 아니다. 현재 목표와 제약에 맞는 행동만 선택하며 비슷한 화면이나 가까운 점만으로 승인하지 않는다.`,choices,selectionImage,batch.progressRegion);
       if(!confident(v,c)||v.choice==='unclear'){
         if(j.mode==='wait'&&transients++<(options.transientRetries??0)){await d.sleep(2000,signal);await observe();continue;}
         return await finish('uncertain_selection',{summary:`Could not distinguish the visible candidates or ${until} after inspecting an enlarged current view.`});
@@ -290,8 +327,21 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
       const key=a.kind==='click'?a.target!:(a.drag?.surface??a.label);
       const dragKey=`${a.drag?.surface??a.label}/${a.drag?.direction??''}/${a.drag?.amount??'medium'}`;
       const before=s!;
-      const performed=await performAction(before,{action,target:a.kind==='click'?a.target:undefined,drag:a.drag,groundedDrag:groundedDrags.get(dragKey),constraints:[...j.constraints,`Local goal: ${j.goal}`,`Action applies when: ${a.when}`,`Expected effect: ${a.expectation}`].join('; '),expectation:a.expectation,grounded:a.grounded??grounded.get(key),
-        beforeDispatch:async(actual,snapshot)=>{if(j.lastInput.outcome==='unresolved'&&j.lastInput.actionId!==a.id)throw new Error('Previous input outcome unresolved');const active=await loadContinuation();if(j.runId&&active?.id!==j.id)throw new Error('Active execution changed before input dispatch');if(active?.lastInput.outcome==='unresolved'&&active.lastInput.actionId!==a.id)throw new Error('Another input outcome is unresolved');const box=actual.box;const point=box?{x:box.x+box.width/2,y:box.y+box.height/2}:undefined;j.lastInput={delivery:'unknown',outcome:'unresolved',actionId:a.id,kind:a.kind,expectation:a.expectation,beforeSnapshotId:snapshot.id,point,to:actual.to,at:Date.now()};j.lastAction=a;j.phase='unknown';await persist();},
+      const performed=await performAction(before,{action,registeredPoint:a.registeredPoint,target:a.kind==='click'?a.target:undefined,drag:a.drag,groundedDrag:groundedDrags.get(dragKey),constraints:[...j.constraints,`Local goal: ${j.goal}`,`Action applies when: ${a.when}`,`Expected effect: ${a.expectation}`].join('; '),expectation:a.expectation,grounded:a.grounded??grounded.get(key),
+        beforeDispatch:async(actual,snapshot)=>{
+          if(a.registeredPoint){
+            const entry=(await listActPoints(snapshot)).find(entry=>entry.id===a.registeredPoint?.entry.id);
+            if(!entry||JSON.stringify(entry)!==JSON.stringify(a.registeredPoint.entry))throw new RegisteredPointChanged();
+          }
+          check();
+          if(j.lastInput.outcome==='unresolved'&&j.lastInput.actionId!==a.id)throw new Error('Previous input outcome unresolved');
+          const active=await loadContinuation();
+          if(j.runId&&active?.id!==j.id)throw new Error('Active execution changed before input dispatch');
+          if(active?.lastInput.outcome==='unresolved'&&active.lastInput.actionId!==a.id)throw new Error('Another input outcome is unresolved');
+          const box=actual.box,point=a.registeredPoint?.point??actual.point??(box?{x:box.x+box.width/2,y:box.y+box.height/2}:undefined);
+          j.lastInput={delivery:'unknown',outcome:'unresolved',actionId:a.id,kind:a.kind,expectation:a.expectation,beforeSnapshotId:snapshot.id,point,to:actual.to,at:Date.now()};
+          j.lastAction=a;j.phase='unknown';await persist();
+        },
         afterDispatch:async()=>{j.lastInput={...j.lastInput,delivery:'sent'};j.phase=a.kind==='drag'?'after_drag':'after_click';j.actions++;callActions++;j.history.push(`${a.label}: dispatched; expected ${a.expectation}`);await persist();},
         onNotDispatched:async reason=>{if(j.lastInput.actionId===a.id&&j.lastInput.outcome==='unresolved'){j.lastInput={...j.lastInput,delivery:'not_sent',outcome:'not_applicable'};j.phase='select';j.lastAction=undefined;j.history.push(`${a.label}: driver did not send input (${reason})`);await persist();}}
       },signal,{...d,check});
@@ -315,7 +365,7 @@ export async function runExecution(input:ExecutionInput,supplier:CandidateSuppli
     }
     return await finish('decision_budget');
   }catch(error){
-    const reason=error instanceof CuaTimeoutError&&['click','drag'].includes(error.operation)?'input_outcome_unknown':error instanceof DeadlineReached?'deadline_reached':error instanceof UserInstructionPending?'user_instruction_pending':timeout.aborted&&!options.signal?.aborted?(Date.now()>=j.deadlineAt?'deadline_reached':'time_budget'):signal.aborted?'cancelled':j.lastInput.delivery==='unknown'&&j.lastInput.outcome==='unresolved'?'input_outcome_unknown':'error';
+    const reason=error instanceof RegisteredPointChanged?'registered_point_changed':error instanceof CuaTimeoutError&&['click','drag'].includes(error.operation)?'input_outcome_unknown':error instanceof DeadlineReached?'deadline_reached':error instanceof UserInstructionPending?'user_instruction_pending':timeout.aborted&&!options.signal?.aborted?(Date.now()>=j.deadlineAt?'deadline_reached':'time_budget'):signal.aborted?'cancelled':j.lastInput.delivery==='unknown'&&j.lastInput.outcome==='unresolved'?'input_outcome_unknown':'error';
     return await finish(reason,{error:error instanceof Error?error.message:String(error)});
   }finally{release();}
 }

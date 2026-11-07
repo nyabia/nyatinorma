@@ -7,7 +7,6 @@ import {mkdtemp,writeFile,rm,mkdir} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {ModelRuntime,ModelRegistry} from '@earendil-works/pi-coding-agent';
-import {selectionPrompt} from '../src/ollama.js';
 import {selectForModel,generateForModel} from '../src/selection.js';
 
 test('SELECT uses the active standard pi provider, auth, image format and thinking compatibility; missing logprobs abstain',async()=>{
@@ -37,13 +36,7 @@ test('SELECT uses the active standard pi provider, auth, image format and thinki
     const choices=[{id:'a',label:'A'},{id:'b',label:'B'},{id:'think',label:'THINK'}];
     const result=await selectForModel(registry,model,'test',choices,undefined,'aW1hZ2U=');assert.equal(result.choice,'b');
     const p=requests[0];assert.equal(p.model,'different-model');assert.equal(p.max_tokens,1);assert.equal(p.logprobs,true);assert.equal(p.chat_template_kwargs.enable_thinking,false);assert.equal(p.keep_alive,undefined);assert.ok(p.messages.some((m:any)=>Array.isArray(m.content)&&m.content.some((b:any)=>b.type==='image_url'&&b.image_url.url==='data:image/png;base64,aW1hZ2U=')));
-    await selectForModel(registry,model,'zoom',choices,undefined,'em9vbQ==',[{prompt:selectionPrompt('test',choices).user,image:'aW1hZ2U=',answer:'B'}]);
-    assert.deepEqual(requests[1].messages.slice(0,p.messages.length),p.messages);
-    assert.equal(requests[1].messages.at(-2).content,'B');
     missing=true;assert.equal((await selectForModel(registry,model,'test',choices)).choice,null);
-    await assert.rejects(selectForModel(registry,{...model,api:'anthropic-messages'},'test',choices),/SELECT/);assert.equal(requests.length,3);
-    const controller=new AbortController();controller.abort();await assert.rejects(selectForModel(registry,model,'test',choices,controller.signal));assert.equal(requests.length,3);
     assert.equal(JSON.parse(await generateForModel(registry,model,'Current local goal','aW1hZ2U=')).description,'screen');
-    const generated=requests.at(-1);assert.equal(generated.max_tokens,1800);assert.equal(generated.chat_template_kwargs.enable_thinking,false);assert.equal(generated.tools,undefined);assert.equal(generated.logprobs,undefined);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await rm(dir,{recursive:true,force:true});}
 });

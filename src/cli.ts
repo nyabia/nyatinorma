@@ -35,7 +35,7 @@ try {
     // The extension registers the native Ollama transport; discard old compatible-API overrides.
     await initializePiSettings(c);
     const args=[resolve(root,'node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'),
-      '--no-builtin-tools','--no-extensions','--no-skills','--no-context-files','--no-prompt-templates',
+      '--no-builtin-tools','--no-extensions','--no-context-files','--no-prompt-templates',
       '--extension',resolve(root,'extensions/nyatinorma.ts'),'--offline',...process.argv.slice(3)];
     const child=spawn(process.execPath,args,{cwd:root,stdio:'inherit',env:{...process.env,PI_CODING_AGENT_DIR:resolve(dataDir,'pi'),PI_OFFLINE:'1'}});
     child.on('exit',(code)=>process.exit(code??1));

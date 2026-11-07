@@ -69,7 +69,8 @@ export async function actOnce(input:{snapshotId:string;action:Candidate;anchor?:
   const action={...input.action,box:input.action.box??resolveTarget(input.action,original.width,original.height).box,to:resolveDestination(input.action)};
   const candidate:ExecutionCandidate={id:action.id,kind:action.kind as 'click'|'drag',label:action.label,when:action.intent,expectation:input.expectation,
     ...(action.kind==='click'?{target:input.grounded?.target??action.label,grounded:input.grounded}:{}),preparedAction:action};
-  const result=await runExecution({goal:`${action.label}: ${input.expectation}`,until:input.expectation,maxActions:1},async()=>({description:`Single observed action: ${action.label}`,actions:[candidate]}),
+  // 명시적인 ny_locate 클릭과 단일 드래그는 ny_act의 기본 등록점 제한과 별개다.
+  const result=await runExecution({goal:`${action.label}: ${input.expectation}`,until:input.expectation,maxActions:1,grid_navigation:true},async()=>({description:`Single observed action: ${action.label}`,actions:[candidate]}),
     input.work??{revision:'observed-action',requests:[action.intent,input.expectation]},{signal},{choose});
   const inputSent=result.lastInput.delivery==='sent';
   return {...result,inputSent,point:inputSent?result.lastInput.point:undefined,expectation:input.expectation,beforeSnapshotId:result.lastInput.beforeSnapshotId,

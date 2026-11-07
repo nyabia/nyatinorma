@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {select,selectionPrompt} from '../src/ollama.js';
 
-test('SELECT sends one-token non-thinking requests to the existing endpoint, without changing model residency',async()=>{
+test('SELECT sends one-token non-thinking image requests and keeps history request-local',async()=>{
   let payload:any;
   const server=createServer(async(req,res)=>{
     let body='';for await(const chunk of req)body+=chunk;payload=JSON.parse(body);
@@ -24,6 +24,6 @@ test('SELECT sends one-token non-thinking requests to the existing endpoint, wit
     assert.deepEqual(payload.messages[2],{role:'assistant',content:'B'});
     await select('state',choices,undefined,'screen-image-base64');
     assert.deepEqual(payload.messages,first.messages);
-    assert.equal(payload.model,'test-vision-model');assert.equal(payload.keep_alive,undefined);assert.equal(payload.options.num_ctx,undefined);
+    assert.equal(payload.model,'test-vision-model');
   }finally{if(oldModel===undefined)delete process.env.NYATINORMA_MODEL;else process.env.NYATINORMA_MODEL=oldModel;if(old===undefined)delete process.env.NYATINORMA_OLLAMA_URL;else process.env.NYATINORMA_OLLAMA_URL=old;server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });

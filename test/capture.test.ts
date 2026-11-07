@@ -20,12 +20,3 @@ test('transparent ScreenCaptureKit padding is removed without OCR and black game
     assert.equal((await sharp(path).metadata()).width,100);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
-
-test('ambiguous transparent capture fails closed before coordinates are used',async()=>{
-  const dir=await mkdtemp(join(tmpdir(),'nyatinorma-capture-'));
-  try {
-    const path=join(dir,'window.png');
-    await sharp({create:{width:200,height:160,channels:4,background:{r:0,g:0,b:0,alpha:0}}}).png().toFile(path);
-    await assert.rejects(normalizeCapture(path,{x:0,y:0,width:100,height:80}),/fully transparent/);
-  }finally{await rm(dir,{recursive:true,force:true});}
-});

@@ -82,7 +82,7 @@ async function captureOnce(signal?:AbortSignal):Promise<Snapshot>{
   // Keep driver screenshot pixels unchanged. Cua owns DPI/Retina conversion.
   // AX metadata is deliberately discarded; the planner receives images, no OCR.
   const meta=await sharp(path).metadata();if(!meta.width||!meta.height)throw new Error('Cua returned no readable window image.');
-  const s:Snapshot={id,at:Date.now(),path,width:meta.width,height:meta.height,window:w,ocr:[]};
+  const s:Snapshot={id,at:Date.now(),path,width:meta.width,height:meta.height,window:w,ocr:[],knowledgeAppId:currentTarget()?.knowledgeAppId};
   await saveJSON(resolve(dataDir,'captures',id+'.json'),s);await writeFile(resolve(dataDir,'latest.txt'),id);return s;
 }
 export function actionArgs(action:Candidate,s:Snapshot,duration:number){

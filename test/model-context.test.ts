@@ -5,24 +5,18 @@ import type {Model} from '@earendil-works/pi-ai';
 import {createContextLimitCheck} from '../src/model-context.js';
 
 const model=():Model<any>=>({id:'vision-model',name:'Vision',api:'openai-completions',provider:'custom',baseUrl:'http://unused.invalid/v1',input:['text','image'],reasoning:true,contextWindow:131072,maxTokens:4096,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}});
-const registry={getApiKeyAndHeaders:async()=>({ok:true as const,apiKey:'test',baseUrl:'http://local.invalid/proxy/v1/',headers:{'X-Custom':'present'}})};
-
-test('server runtime cap uses resolved provider auth and limits current context without raising user caps',async()=>{
- let calls=0;
- const check=createContextLimitCheck(async(url,init)=>{
-  calls++;assert.equal(url,'http://local.invalid/proxy/v1/models');
-  assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer test');
-  assert.equal(new Headers(init?.headers).get('X-Custom'),'present');
-  return Response.json({data:[{id:'other',max_model_len:1024},{id:'vision-model',max_model_len:65536}]});
- });
- const m=model();assert.deepEqual(await check(m,registry),{previous:131072,current:65536});assert.equal(m.contextWindow,65536);
- const capped={...model(),contextWindow:32768};assert.equal(await check(capped,registry),undefined);assert.equal(capped.contextWindow,32768);assert.equal(calls,1);
+const registry=(registered?:Model<any>)=>({
+ getApiKeyAndHeaders:async()=>({ok:true as const,apiKey:'test',baseUrl:'http://local.invalid/proxy/v1/'}),
+ find:(provider:string,id:string)=>registered?.provider===provider&&registered.id===id?registered:undefined,
 });
 
-test('absent, invalid or unavailable metadata preserves registration; other API families are untouched',async()=>{
- for(const value of [undefined,-1,0,'65536',1.5]){
-  const m=model();await createContextLimitCheck(async()=>Response.json({data:[{id:m.id,max_model_len:value}]}))(m,registry);assert.equal(m.contextWindow,131072);
- }
- const m=model();await createContextLimitCheck(async()=>{throw new Error('offline');})(m,registry);assert.equal(m.contextWindow,131072);
- let otherCalls=0;const other={...model(),api:'nyatinorma-native-ollama'};await createContextLimitCheck(async()=>{otherCalls++;return Response.json({});})(other,registry);assert.equal(otherCalls,0);
+test('server runtime context overrides configured limits upward and downward',async()=>{
+ const check=createContextLimitCheck(async()=>Response.json({data:[{id:'vision-model',max_model_len:409600}]}));
+ const m={...model(),contextWindow:65536},registered={...model(),contextWindow:65536},r=registry(registered);
+ assert.deepEqual(await check(m,r),{previous:65536,current:409600});
+ assert.equal(m.contextWindow,409600);assert.equal(registered.contextWindow,409600);
+ const larger={...model(),contextWindow:524288};registered.contextWindow=524288;
+ assert.deepEqual(await check(larger,r),{previous:524288,current:409600});
+ assert.equal(larger.contextWindow,409600);assert.equal(registered.contextWindow,409600);
 });
+

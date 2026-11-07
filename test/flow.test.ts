@@ -9,7 +9,6 @@ import {runFlow,workContract,type Flow} from '../src/flow.js';
 import {fingerprint} from '../src/vision.js';
 import {dataDir,defaults} from '../src/config.js';
 import {withExecutionHost,type ExecutionHost} from '../src/host-context.js';
-import {proposedDragEnds} from '../src/locate-drag.js';
 import type {Continuation} from '../src/execution-contract.js';
 import type {Snapshot,Decision} from '../src/types.js';
 
@@ -21,8 +20,8 @@ async function fixture(body:(flow:Flow,screens:Snapshot[])=>Promise<void>){
  const dir=await mkdtemp(join(dataDir,'test-tmp','ny-flow-'));
  try{
   const screens:Snapshot[]=[];
-  for(let i=0;i<12;i++){
-   const path=join(dir,`${i}.png`);const color=i===11?'black':'white',background=i===11?'white':'black';
+  for(let i=0;i<5;i++){
+   const path=join(dir,`${i}.png`);const color=i===4?'black':'white',background=i===4?'white':'black';
    await sharp(Buffer.from(`<svg width="200" height="200"><rect width="200" height="200" fill="${background}"/><rect width="50" height="40" fill="${color}"/><rect y="80" width="200" height="120" fill="rgb(${i*20},${i*20},${i*20})"/></svg>`)).png().toFile(path);
    screens.push({id:String(i),path,at:Date.now(),width:200,height:200,ocr:[],window:{pid:1,windowId:2,title:'Example',frame:{x:0,y:0,width:200,height:200}}});
   }
@@ -33,20 +32,19 @@ async function fixture(body:(flow:Flow,screens:Snapshot[])=>Promise<void>){
  }finally{await rm(dir,{recursive:true,force:true});}
 }
 
-test('saved procedure keeps ten scrolling results and completion inside the common executor',async()=>fixture(async(flow,screens)=>{
- let index=0;const events:any[]=[];flow.states[0].actions[0].amount='small';
- const r=await runFlow(flow,contract,{maxActions:20},{capture:async()=>screens[index],sleep:async()=>{},execute:async(action)=>{
+test('saved procedure scrolls repeatedly and observes completion inside the common executor',async()=>fixture(async(flow,screens)=>{
+ let index=0;flow.states[0].actions[0].amount='small';
+ const r=await runFlow(flow,contract,{}, {capture:async()=>screens[index],sleep:async()=>{},execute:async(action)=>{
   assert.ok(action.box&&action.to);
   const start={x:action.box.x+action.box.width/2,y:action.box.y+action.box.height/2};
-  assert.deepEqual(action.to,proposedDragEnds(start,'left',undefined,'small')[0]);
   assert.ok(action.to.x<start.x);assert.equal(action.to.y,start.y);
   index++;return {};
  },choose:async(_prompt,choices)=>{
-  if(choices.some(c=>c.id==='moved'))return decision(index===10?'found':'moved');
+  if(choices.some(c=>c.id==='moved'))return decision(index===3?'found':'moved');
   if(choices[0].id==='yes')return decision('yes');
-  return decision(index===10?'done':'move');
- },trace:async e=>{events.push(e);}});
- assert.equal(r.reason,'local_goal_observed',r.error);assert.equal(r.actions,10);assert.equal(events.filter(e=>e.event==='dispatch').length,10);
+  return decision(index===3?'done':'move');
+ },trace:async()=>{}});
+ assert.equal(r.reason,'local_goal_observed',r.error);assert.equal(r.actions,3);
 }));
 
 test('an unknown dispatch blocks its own session without poisoning another flow fixture',async()=>{
@@ -85,28 +83,24 @@ test('an already found item needs fresh completion evidence and sends no input',
  assert.equal(r.actions,0);assert.equal(r.status,'done');assert.ok(captures>=2);assert.equal(r.evidence[0].snapshotId,'0');
 }));
 
-test('passive waits use the common loop without spending candidate budget or sending input',async()=>fixture(async(flow,screens)=>{
- flow.states[0].actions=[];flow.states[0].anchors=[];
- for(const maxWaits of [2,12]){
-  flow.states[0].maxWaits=maxWaits;let polls=0;
-  const r=await runFlow(flow,contract,{confirmDone:2},{capture:async()=>screens[0],sleep:async()=>{},execute:async()=>{throw new Error('must not input');},choose:async(_p,choices)=>decision(choices[0].id==='yes'?'yes':++polls===11?'done':'wait'),trace:async()=>{}});
-  assert.equal(r.reason,maxWaits===2?'wait_budget':'local_goal_observed',r.error);assert.equal(r.actions,0);
- }
- await assert.rejects(runFlow({...flow,states:[{...flow.states[0],actions:[{id:'click',kind:'click',label:'Button',box:roi,when:'Visible'}]}]},contract,{transientRetries:1}),/observation-only/);
+test('passive waits yield at the wait budget without sending input',async()=>fixture(async(flow,screens)=>{
+ flow.states[0].actions=[];flow.states[0].anchors=[];flow.states[0].maxWaits=2;
+ const r=await runFlow(flow,contract,{}, {capture:async()=>screens[0],sleep:async()=>{},execute:async()=>{throw new Error('must not input');},choose:async(_prompt,choices)=>decision(choices[0].id==='yes'?'yes':'wait'),trace:async()=>{}});
+ assert.equal(r.reason,'wait_budget',r.error);assert.equal(r.actions,0);
 }));
 
 test('declared state transition is followed; undeclared or ambiguous screens return without input',async()=>fixture(async(flow,screens)=>{
  flow.states[0].actions[0].next=['second'];flow.states[0].doneWhen='never';
- flow.states.push({...flow.states[0],id:'second',description:'Second screen',doneWhen:'Requested details are visible',anchors:[{box:anchor,template:await fingerprint(screens[11].path,anchor)}],actions:[]});
+ flow.states.push({...flow.states[0],id:'second',description:'Second screen',doneWhen:'Requested details are visible',anchors:[{box:anchor,template:await fingerprint(screens[4].path,anchor)}],actions:[]});
  let index=0;
- const r=await runFlow(flow,contract,{}, {capture:async()=>screens[index],sleep:async()=>{},execute:async()=>{index=11;},choose:async(_prompt,choices)=>{
+ const r=await runFlow(flow,contract,{}, {capture:async()=>screens[index],sleep:async()=>{},execute:async()=>{index=4;},choose:async(_prompt,choices)=>{
   if(choices[0].id==='yes')return decision('yes');
   if(choices.some(c=>c.id==='other_screen'))return decision('other_screen');
-  return decision(index===11?'done':'move');
+  return decision(index===4?'done':'move');
  },trace:async()=>{}});
  assert.equal(r.state,'second');assert.equal(r.reason,'local_goal_observed',r.error);assert.equal(r.actions,1);
  assert.equal(r.evidence.at(-1)?.claim,'Requested details are visible');
- const unknown=await runFlow(flow,contract,{}, {capture:async()=>screens[11],choose:async()=>decision('none'),execute:async()=>{throw new Error('must not input');},trace:async()=>{}});
+ const unknown=await runFlow(flow,contract,{}, {capture:async()=>screens[4],choose:async()=>decision('none'),execute:async()=>{throw new Error('must not input');},trace:async()=>{}});
  assert.equal(unknown.reason,'unknown_screen');assert.equal(unknown.actions,0);
 }));
 

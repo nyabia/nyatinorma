@@ -21,12 +21,15 @@ export function configuredKnowledgeId(c:TargetConfig){
   const name=c.bundleId||c.targetApp;
   return c.knowledgeAppId??(name.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,63)||'workspace');
 }
+export function appKnowledgeId(window:Pick<AppWindow,'appName'|'bundleId'>){
+  const identity=window.bundleId||window.appName;
+  // 비라틴 이름과 같은 슬러그로 축약되는 이름도 해시로 구별한다.
+  const slug=identity.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'app';
+  return `${slug}-${createHash('sha256').update(identity).digest('hex').slice(0,12)}`;
+}
 export function bindAppWindow(window:AppWindow,c:TargetConfig):AppTarget{
   const configured=c.bundleId&&window.bundleId?window.bundleId===c.bundleId:Boolean(c.targetApp&&window.appName===c.targetApp);
-  const identity=window.bundleId||window.appName;
-  // Hash preserves non-Latin names and avoids collisions between slugged names.
-  const slug=identity.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,45)||'app';
-  return {...window,...(configured&&!window.bundleId&&c.bundleId?{bundleId:c.bundleId}:{}),knowledgeAppId:configured?configuredKnowledgeId(c):`${slug}-${createHash('sha256').update(identity).digest('hex').slice(0,12)}`};
+  return {...window,...(configured&&!window.bundleId&&c.bundleId?{bundleId:c.bundleId}:{}),knowledgeAppId:configured?configuredKnowledgeId(c):appKnowledgeId(window)};
 }
 export function appWindows(rows:any[]):AppWindow[]{
   return rows.flatMap(w=>{

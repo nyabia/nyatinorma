@@ -9,17 +9,22 @@ import {parseStopAt} from './time.js';
 import {executionHost} from './host-context.js';
 import {pendingInput,recordPendingInput} from './input-lock.js';
 import type {Box,Candidate,Point,Snapshot} from './types.js';
+import type {ProjectedActPoint} from './act-points.js';
 
 export const reservedExecutionIds=new Set(['done','wait','rebuild','stop','found','moved','adjust','still','no_change','other_screen','unclear','smaller','larger','reverse','retry','boundary']);
 
 export type ExecutionStatus='done'|'yielded'|'needs_decision'|'stopped'|'error';
 export type InputState={delivery:'not_sent'|'sent'|'unknown';outcome:'not_applicable'|'unresolved'|'observed';actionId?:string;kind?:'click'|'drag';expectation?:string;beforeSnapshotId?:string;afterSnapshotId?:string;point?:Point;to?:Point;at?:number};
 export type Evidence={claim:string;snapshotId:string};
-export type ExecutionCandidate={id:string;kind:'click'|'drag';label:string;when:string;expectation:string;target?:string;drag?:{surface:string;direction:'up'|'down'|'left'|'right';amount?:'small'|'medium'|'large';view?:Box;region?:Box};next?:string[];preparedAction?:Candidate;grounded?:{target:string;source:Snapshot;box:Box}};
+export type ExecutionCandidate={id:string;kind:'click'|'drag';label:string;when:string;expectation:string;target?:string;drag?:{surface:string;direction:'up'|'down'|'left'|'right';amount?:'small'|'medium'|'large';view?:Box;region?:Box};next?:string[];preparedAction?:Candidate;grounded?:{target:string;source:Snapshot;box:Box};registeredPoint?:ProjectedActPoint};
+export function registeredClickCandidate(point:ProjectedActPoint,goal:string,until:string):ExecutionCandidate{
+  const {entry}=point;
+  return {id:entry.id,kind:'click',label:entry.label,target:entry.description,when:`현재 화면이 등록 화면 "${entry.screen}"과 일치하고 표식이 "${entry.description}"에 해당하는 가려지지 않은 사용 가능한 컨트롤 안에 있음`,expectation:`현재 작업 목표 "${goal}"에 부합하는 클릭의 직접적인 UI 반응이 관찰됨. 최종 완료 조건 "${until}"의 달성 여부는 별도로 확인한다.`,registeredPoint:point};
+}
 export type CandidateBatch={description:string;actions:ExecutionCandidate[];until?:string;progressRegion?:Box;procedure?:{name:string;version:number;state?:string};stopReason?:string;generationAttempts?:number};
-export type ExecutionInput={dragOnly?:boolean;goal?:string;until?:string;doneWhen?:string;resume?:string;constraints?:string[];maxActions?:number;maxSeconds?:number;maxRebuilds?:number;mode?:'act'|'flow'|'wait'};
+export type ExecutionInput={grid_navigation?:boolean;dragOnly?:boolean;goal?:string;until?:string;doneWhen?:string;resume?:string;constraints?:string[];maxActions?:number;maxSeconds?:number;maxRebuilds?:number;mode?:'act'|'flow'|'wait'};
 export type ExecutionResult={reason:string;status:ExecutionStatus;summary:string;goal:string;actions:number;rebuilds:number;selectCalls:number;elapsedMs:number;history:string[];visualMemory?:unknown;pendingOutcome?:string;snapshot?:Snapshot;evidence:Evidence[];lastInput:InputState;procedure?:CandidateBatch['procedure'];continuationId?:string;nextCall?:{resume:string};question?:string;error?:string;[key:string]:unknown};
-export type Continuation={schemaVersion:1;dragOnly?:boolean;id:string;runId?:string;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';createdAt:number;deadlineAt:number;updatedAt:number;phase:'select'|'after_drag'|'after_click'|'unknown'|'done'|'stopped';procedure?:CandidateBatch['procedure'];batch?:CandidateBatch;lastInput:InputState;history:string[];actions:number;rebuilds:number;selectCalls:number;waits:number;scan?:unknown;evidence?:Evidence[];lastSnapshotId?:string;lastAction?:ExecutionCandidate;lastStatus?:ExecutionStatus};
+export type Continuation={schemaVersion:1;grid_navigation?:boolean;pendingGridNavigation?:boolean;dragOnly?:boolean;id:string;runId?:string;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait';createdAt:number;deadlineAt:number;updatedAt:number;phase:'select'|'after_drag'|'after_click'|'unknown'|'done'|'stopped';procedure?:CandidateBatch['procedure'];batch?:CandidateBatch;lastInput:InputState;history:string[];actions:number;rebuilds:number;selectCalls:number;waits:number;scan?:unknown;evidence?:Evidence[];lastSnapshotId?:string;lastAction?:ExecutionCandidate;lastStatus?:ExecutionStatus};
 
 function journalPath(){return currentRun()?resolve(activeRunPath(),'execution-continuation.json'):undefined;}
 function archivePath(id:string){
@@ -28,8 +33,8 @@ function archivePath(id:string){
 }
 const ephemeral=new Map<string,Continuation>();
 let ephemeralLatest:string|undefined;
-export function newContinuation(input:{dragOnly?:boolean;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait'}):Continuation{
-  const host=executionHost(),now=Date.now(),run=host?undefined:currentRun(),stopAt=run?.stopAt;return {schemaVersion:1,id:randomUUID(),runId:host?.id??run?.id,revision:input.revision,goal:input.goal,until:input.until,constraints:input.constraints,mode:input.mode,...(input.dragOnly?{dragOnly:true}:{}),createdAt:now,deadlineAt:host?.deadlineAt??(stopAt?parseStopAt(stopAt):Number.MAX_SAFE_INTEGER),updatedAt:now,phase:'select',lastInput:{delivery:'not_sent',outcome:'not_applicable'},history:[],actions:0,rebuilds:0,selectCalls:0,waits:0};
+export function newContinuation(input:{grid_navigation?:boolean;dragOnly?:boolean;revision:string;goal:string;until:string;constraints:string[];mode:'act'|'flow'|'wait'}):Continuation{
+  const host=executionHost(),now=Date.now(),run=host?undefined:currentRun(),stopAt=run?.stopAt;return {schemaVersion:1,id:randomUUID(),runId:host?.id??run?.id,revision:input.revision,goal:input.goal,until:input.until,constraints:input.constraints,mode:input.mode,grid_navigation:input.grid_navigation??false,...(input.dragOnly?{dragOnly:true}:{}),createdAt:now,deadlineAt:host?.deadlineAt??(stopAt?parseStopAt(stopAt):Number.MAX_SAFE_INTEGER),updatedAt:now,phase:'select',lastInput:{delivery:'not_sent',outcome:'not_applicable'},history:[],actions:0,rebuilds:0,selectCalls:0,waits:0};
 }
 export async function loadContinuation(id?:string):Promise<Continuation|undefined>{
   const host=executionHost();if(host){const value=await host.loadContinuation(id);if(value&&(value.schemaVersion!==1||value.runId!==host.id))throw new Error('Invalid host execution continuation');return value;}

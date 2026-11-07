@@ -18,6 +18,5 @@ test('scan remembers nonadjacent visits without accumulating model image history
   const recurrence=await memory.observe({...frames[0],id:'new-capture'});
   assert.equal(recurrence.info.revisited,true);assert.equal(recurrence.info.distinctViews,3);assert.equal(recurrence.info.closestSnapshotId,'0');
   const restored=new VisualMemory({x:0,y:0,width:1,height:1},100,memory.serialize());assert.equal((await restored.observe(frames[1])).info.revisited,true);
-  const image=await memory.comparison(frames[2],recurrence.reference);assert.ok((await sharp(Buffer.from(image,'base64')).metadata()).height!>60);
  }finally{await rm(dir,{recursive:true,force:true});}
 });

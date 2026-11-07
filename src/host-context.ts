@@ -8,6 +8,8 @@ import type {Snapshot} from './types.js';
 export type ExecutionHost={
   id:string;
   inputScope?:string;
+  // 호스트가 명시한 실행별 등록 저장소만 사용하며 독립 실행 저장소로 우회하지 않는다.
+  actPointDirectory?:string;
   config:()=>Promise<Config>;
   loadContinuation:(id?:string)=>Promise<Continuation|undefined>;
   saveContinuation:(value:Continuation)=>Promise<void>;

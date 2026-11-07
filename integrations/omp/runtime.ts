@@ -9,12 +9,14 @@ import {defaults,saveJSON,type Config} from '../../src/config.js';
 import {runExecution,type CandidateSupplier,type SupplierContext,type ExecutionOptions} from '../../src/execution-controller.js';
 import {runAct,type GenerateState} from '../../src/adaptive-act.js';
 import type {CandidateBatch,Continuation,ExecutionInput,ExecutionResult} from '../../src/execution-contract.js';
-import type {ExecutionHost} from '../../src/host-context.js';
+import {withExecutionHost,executionSnapshot,type ExecutionHost} from '../../src/host-context.js';
 import {withDecisionBackend,decisionBackendInfo,type DecisionBackendConfig} from '../../src/decision-backend.js';
 import {InputNotSentError} from '../../src/input-error.js';
 import type {Candidate,Decision,Snapshot} from '../../src/types.js';
 import {validateBox} from '../../src/vision.js';
 import type {SelectHistory} from '../../src/ollama.js';
+import {addActPoint,removeActPoint,listActPoints,projectActPoint,renderActPointOverlay,type ActPointInput,type ProjectedActPoint} from '../../src/act-points.js';
+import {appKnowledgeId} from '../../src/app-target.js';
 
 export type ComputerWindow={id:string|number;app:string;pid?:number;title:string;bounds:{x:number;y:number;width:number;height:number};screenshot:(options:{silent:boolean})=>Promise<{path:string;width:number;height:number;coordinateWidth?:number;coordinateHeight?:number}>;click:(x:number,y:number)=>Promise<unknown>;drag:(points:number[][])=>Promise<unknown>};
 export type OmpBridges={computer:{window:(filter:unknown)=>Promise<ComputerWindow>};judge:(state:unknown,schema:unknown,options?:unknown)=>Promise<unknown>};
@@ -39,7 +41,7 @@ const validId=(id:string)=>{if(!/^[0-9a-f-]{36}$/.test(id))throw new Error('Inva
 export function createNyatinorma({computer,judge}:OmpBridges,settings:OmpOptions={}){
   if(!computer?.window||typeof judge!=='function')throw new Error('Pass the existing Eval computer and judge bridges');
   const storage=resolve(settings.storageDir??fileURLToPath(new URL('./state/',import.meta.url)));
-  const host:ExecutionHost={id:`omp:${storage}`,config:async()=>({...defaults,...settings.config}),
+  const host:ExecutionHost={id:`omp:${storage}`,actPointDirectory:resolve(storage,'act-points'),config:async()=>({...defaults,...settings.config}),
     loadContinuation:async(id)=>json<Continuation>(resolve(storage,id?`executions/${validId(id)}.json`:'active.json')),
     saveContinuation:async(value)=>{await mkdir(resolve(storage,'executions'),{recursive:true});await saveJSON(resolve(storage,'active.json'),value);await saveJSON(resolve(storage,'executions',validId(value.id)+'.json'),value);},
     snapshot:async(id)=>json<HostSnapshot>(resolve(storage,'captures',validId(id)+'.json')),
@@ -64,7 +66,8 @@ export function createNyatinorma({computer,judge}:OmpBridges,settings:OmpOptions
     target=win.id;
     const meta=await sharp(shot.path).metadata();if(!meta.width||!meta.height)throw new Error('Screenshot PNG has no dimensions');
     const id=randomUUID(),path=resolve(storage,'captures',id+'.png');await mkdir(resolve(storage,'captures'),{recursive:true});await copyFile(shot.path,path);
-    const frame:HostSnapshot={id,path,at:Date.now(),width:meta.width,height:meta.height,ocr:[],window:{pid:win.pid??identity(win.app),windowId:identity([win.id,win.app,win.pid]),title:win.title??'',appName:win.app,frame:{x:win.bounds.x,y:win.bounds.y,width:cw,height:ch}},omp:{windowId:win.id,app:win.app,pid:win.pid,bounds:{...win.bounds},coordinateWidth:cw,coordinateHeight:ch}};
+    const window={pid:win.pid??identity(win.app),windowId:identity([win.id,win.app,win.pid]),title:win.title??'',appName:win.app,frame:{x:win.bounds.x,y:win.bounds.y,width:cw,height:ch}};
+    const frame:HostSnapshot={id,path,at:Date.now(),width:meta.width,height:meta.height,ocr:[],window,knowledgeAppId:appKnowledgeId(window),omp:{windowId:win.id,app:win.app,pid:win.pid,bounds:{...win.bounds},coordinateWidth:cw,coordinateHeight:ch}};
     await saveJSON(resolve(storage,'captures',id+'.json'),frame);lastFrame=frame;return frame;
   };
   const choose=async(state:string,choices:{id:string;label:string}[],signal?:AbortSignal,image?:string,_config?:unknown,history:SelectHistory=[]):Promise<Decision>=>{
@@ -143,6 +146,19 @@ export function createNyatinorma({computer,judge}:OmpBridges,settings:OmpOptions
   };
   return {
     act:(request:GoalOptions)=>run('act',request),wait:(request:GoalOptions)=>run('wait',request),scroll:(request:GoalOptions)=>run('scroll',request),
+    // 공통 레지스트리를 호스트 저장소에 묶는다. 저장된 캡처만 읽고 새 화면이나 입력을 만들지 않는다.
+    actPointAdd:(input:ActPointInput)=>withExecutionHost(host,async()=>{
+      const entry=await addActPoint(input),source=await executionSnapshot(input.snapshotId);if(!source)throw new Error('Unknown snapshot ID');
+      const projected=projectActPoint(entry,source),points=projected?[projected]:[];
+      return {entry,snapshotId:source.id,projected:points,image:await renderActPointOverlay(source,points),unprojectedIds:projected?[]:[entry.id],inputSent:false};
+    }),
+    actPointRemove:(id:string)=>withExecutionHost(host,()=>removeActPoint(id)),
+    actPointList:(input:{snapshotId?:string}={})=>withExecutionHost(host,async()=>{
+      const source=input.snapshotId?await executionSnapshot(input.snapshotId):undefined;if(input.snapshotId&&!source)throw new Error('Unknown snapshot ID');
+      const entries=await listActPoints(source);if(!source)return {entries,inputSent:false};
+      const points=entries.map(entry=>projectActPoint(entry,source)).filter((point):point is ProjectedActPoint=>point!==undefined);
+      return {entries,snapshotId:source.id,projected:points,image:await renderActPointOverlay(source,points),unprojectedIds:entries.filter(entry=>!points.some(point=>point.entry.id===entry.id)).map(entry=>entry.id),inputSent:false};
+    }),
     async status(){const active=await host.loadContinuation();return {busy,stopped,continuationId:active?.id,phase:active?.phase,lastInput:active?.lastInput,result:lastResult,frame:lastFrame,decisionRoute:[...provenance]};},
     stop(){stopped=true;controller?.abort(new Error('Stopped by caller'));return {stopping:busy,stopped:true};},
     async resume(request:Partial<GoalOptions>={}){

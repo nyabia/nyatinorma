@@ -6,7 +6,7 @@ export type TargetCoordinates = {box?:Box;point?:Point;regionPath?:string[];grid
 export type DestinationCoordinates = {to?:Point;toRegionPath?:string[];toGridPoint?:GridPoint};
 export type OCR = {text:string;confidence:number;box:Box};
 export type WindowInfo = {windowId:number;pid:number;title:string;frame:Box;appName?:string;bundleId?:string};
-export type Snapshot = {id:string;at:number;path:string;width:number;height:number;window:WindowInfo;ocr:OCR[]};
+export type Snapshot = {id:string;at:number;path:string;width:number;height:number;window:WindowInfo;ocr:OCR[];knowledgeAppId?:string};
 export type ActionKind = 'click'|'drag'|'wait'|'think';
 export type Candidate = TargetCoordinates & DestinationCoordinates & {
   id:string;label:string;kind:ActionKind;
